@@ -68,8 +68,11 @@ export default function RegisterPage() {
   }
 
   return (
-    <Card className="shadow-xl shadow-slate-200/70" styles={{ body: { padding: 32 } }}>
-      <Typography.Title level={2} className="!mb-2">
+    <Card styles={{ body: { padding: 36 } }}>
+      <Typography.Text className="!text-xs !font-semibold !tracking-[0.18em] !text-[#1e88e5]">
+        CREATE ACCOUNT
+      </Typography.Text>
+      <Typography.Title level={2} className="!mb-2 !mt-3 !tracking-[-0.03em]">
         创建账号
       </Typography.Title>
       <Typography.Paragraph type="secondary">
@@ -121,7 +124,7 @@ export default function RegisterPage() {
       </Form>
 
       <Typography.Paragraph type="secondary" className="!mb-0 !mt-6 !text-center">
-        已有账号？<Link className="text-violet-600" href="/login">去登录</Link>
+        已有账号？<Link className="text-[#1e88e5]" href="/login">去登录</Link>
       </Typography.Paragraph>
     </Card>
   )

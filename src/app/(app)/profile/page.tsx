@@ -142,22 +142,22 @@ export default function ProfilePage() {
 
   if (isLoading) {
     return (
-      <main className="flex min-h-80 items-center justify-center">
+      <main className="desktop-page desktop-page--narrow flex min-h-80 items-center justify-center">
         <Spin size="large" />
       </main>
     )
   }
 
   return (
-    <main className="mx-auto max-w-4xl px-5 py-8 sm:px-8 lg:px-10 lg:py-12">
+    <main className="desktop-page desktop-page--narrow">
       <PageHeading
         eyebrow="账号设置"
         title="个人中心"
         description="管理你的站内昵称和登录账号。"
       />
-      <Card className="shadow-sm">
+      <Card styles={{ body: { padding: 32 } }}>
         <div className="mb-8 flex items-center gap-4">
-          <Avatar size={72} icon={<UserOutlined />} className="!bg-violet-500">
+          <Avatar size={72} icon={<UserOutlined />} className="!bg-[#42a5f5]">
             {profile?.display_name.slice(0, 1)}
           </Avatar>
           <div>

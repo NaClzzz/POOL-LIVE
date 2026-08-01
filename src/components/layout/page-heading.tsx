@@ -1,21 +1,15 @@
-"use client";
+type PageHeadingProps = {
+  eyebrow?: string
+  title: string
+  description: string
+}
 
-import { Typography } from "antd";
-
-export function PageHeading({
-  eyebrow,
-  title,
-  description,
-}: {
-  eyebrow?: string;
-  title: string;
-  description: string;
-}) {
+export function PageHeading({ eyebrow, title, description }: PageHeadingProps) {
   return (
-    <header className="mb-8">
-      {eyebrow ? <Typography.Text type="secondary">{eyebrow}</Typography.Text> : null}
-      <Typography.Title level={1} className="!mb-2 !mt-1 !text-3xl !tracking-tight">{title}</Typography.Title>
-      <Typography.Paragraph type="secondary" className="!mb-0 !max-w-2xl !text-base">{description}</Typography.Paragraph>
+    <header className="page-heading">
+      {eyebrow ? <p className="page-heading__eyebrow">{eyebrow}</p> : null}
+      <h1 className="page-heading__title">{title}</h1>
+      <p className="page-heading__description">{description}</p>
     </header>
-  );
+  )
 }

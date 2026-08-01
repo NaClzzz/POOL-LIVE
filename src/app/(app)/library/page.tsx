@@ -5,9 +5,11 @@ import {
   HeartFilled,
   ImportOutlined,
   PlayCircleFilled,
+  RobotOutlined,
+  StopOutlined,
 } from '@ant-design/icons'
 import { Alert, Avatar, Button, Card, Input, List, Popconfirm, Space, Spin, Typography } from 'antd'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { PageHeading } from '@/components/layout/page-heading'
 import { createClient } from '@/lib/supabase/client'
@@ -34,6 +36,10 @@ type PlayUrlResponse = {
   data?: Array<{
     url: string | null
   }>
+  message?: string
+}
+
+type AnalysisErrorResponse = {
   message?: string
 }
 
@@ -78,6 +84,10 @@ export default function LibraryPage() {
   const [libraryError, setLibraryError] = useState('')
   const [actionError, setActionError] = useState('')
   const [importMessage, setImportMessage] = useState('')
+  const [likedAnalysis, setLikedAnalysis] = useState('')
+  const [analysisError, setAnalysisError] = useState('')
+  const [isGeneratingAnalysis, setIsGeneratingAnalysis] = useState(false)
+  const analysisAbortRef = useRef<AbortController | null>(null)
   const startQueue = usePlayerStore(state => state.startQueue)
 
   useEffect(() => {
@@ -122,6 +132,12 @@ export default function LibraryPage() {
       isCurrent = false
     }
   }, [supabase])
+
+  useEffect(() => {
+    return () => {
+      analysisAbortRef.current?.abort()
+    }
+  }, [])
 
   async function handleImport() {
     const playlistId = extractPlaylistId(playlistInput)
@@ -252,6 +268,9 @@ export default function LibraryPage() {
       if (error) throw error
 
       setLikedSongs([])
+      analysisAbortRef.current?.abort()
+      setLikedAnalysis('')
+      setAnalysisError('')
       setImportMessage('已清空我喜欢的音乐。')
     } catch (error) {
       setActionError(error instanceof Error ? `清空失败：${error.message}` : '清空失败，请稍后再试')
@@ -260,15 +279,72 @@ export default function LibraryPage() {
     }
   }
 
+  async function handleGenerateLikedAnalysis() {
+    if (isGeneratingAnalysis || likedSongs.length === 0) return
+
+    const controller = new AbortController()
+    analysisAbortRef.current = controller
+    setIsGeneratingAnalysis(true)
+    setLikedAnalysis('')
+    setAnalysisError('')
+
+    try {
+      const response = await fetch('/api/ai/liked-playlist-analysis', {
+        method: 'POST',
+        signal: controller.signal,
+      })
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as AnalysisErrorResponse
+        throw new Error(data.message || '生成赏析失败，请稍后再试。')
+      }
+
+      if (!response.body) {
+        throw new Error('没有收到赏析内容，请稍后再试。')
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let text = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+
+        if (done) break
+
+        text += decoder.decode(value, { stream: true })
+        setLikedAnalysis(text)
+      }
+
+      text += decoder.decode()
+      setLikedAnalysis(text)
+    } catch (error) {
+      if (controller.signal.aborted) {
+        setAnalysisError('已取消生成。')
+      } else {
+        setAnalysisError(error instanceof Error ? error.message : '生成赏析失败，请稍后再试。')
+      }
+    } finally {
+      if (analysisAbortRef.current === controller) {
+        analysisAbortRef.current = null
+        setIsGeneratingAnalysis(false)
+      }
+    }
+  }
+
+  function handleCancelLikedAnalysis() {
+    analysisAbortRef.current?.abort()
+  }
+
   return (
-    <main className="mx-auto max-w-6xl px-5 py-8 sm:px-8 lg:px-10 lg:py-12">
+    <main className="desktop-page">
       <PageHeading
         eyebrow="我的收藏"
         title="我喜欢的音乐"
         description="搜索时点亮爱心收藏歌曲，也可以导入网易云公开歌单。"
       />
 
-      <Card className="mb-6 shadow-sm" title="导入网易云歌单">
+      <Card className="mb-6" title="导入网易云歌单" styles={{ body: { padding: 28 } }}>
         <Space.Compact className="w-full">
           <Input
             size="large"
@@ -299,11 +375,39 @@ export default function LibraryPage() {
       {actionError ? <Alert className="mb-6" type="error" showIcon message={actionError} /> : null}
       {importMessage ? <Alert className="mb-6" type="success" showIcon message={importMessage} /> : null}
 
+      <Card className="mb-6" title="AI 赏析" styles={{ body: { padding: 28 } }}>
+        <Typography.Paragraph className="!mb-5 !max-w-3xl !leading-8 !text-[#71808a]">
+          将读取你当前喜欢列表中的全部歌名，并随机抽取几首歌的歌词，生成一次不保存的歌单赏析。
+        </Typography.Paragraph>
+        <Space wrap>
+          <Button
+            type="primary"
+            icon={<RobotOutlined />}
+            loading={isGeneratingAnalysis}
+            disabled={isLoadingLibrary || likedSongs.length === 0}
+            onClick={() => void handleGenerateLikedAnalysis()}
+          >
+            生成我的歌单赏析
+          </Button>
+          {isGeneratingAnalysis ? (
+            <Button icon={<StopOutlined />} onClick={handleCancelLikedAnalysis}>
+              取消生成
+            </Button>
+          ) : null}
+        </Space>
+        {analysisError ? <Alert className="mt-5" type="error" showIcon message={analysisError} /> : null}
+        {likedAnalysis ? (
+          <Typography.Paragraph className="!mb-0 !mt-5 !whitespace-pre-wrap !leading-8 !text-[#34454f]">
+            {likedAnalysis}
+          </Typography.Paragraph>
+        ) : null}
+      </Card>
+
       <Card
-        className="shadow-sm"
+        styles={{ body: { padding: 24 } }}
         title={
           <Space>
-            <HeartFilled className="text-rose-500" />
+            <HeartFilled className="text-[#42a5f5]" />
             <span>我喜欢的音乐</span>
             {!isLoadingLibrary ? <Typography.Text type="secondary">{likedSongs.length} 首</Typography.Text> : null}
           </Space>
@@ -353,7 +457,7 @@ export default function LibraryPage() {
                     loading={playingSongId === song.song_id}
                     disabled={playingSongId !== null}
                     onClick={() => void handlePlay(song)}
-                    icon={<PlayCircleFilled className="!text-violet-500" />}
+                    icon={<PlayCircleFilled className="!text-[#42a5f5]" />}
                   />,
                   <Button
                     key="remove"

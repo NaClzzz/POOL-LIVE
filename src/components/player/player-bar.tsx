@@ -3,17 +3,15 @@
 import {
   CaretRightFilled,
   CustomerServiceOutlined,
-  DeleteOutlined,
   HeartOutlined,
   PauseOutlined,
-  PlayCircleFilled,
   StepBackwardOutlined,
   StepForwardOutlined,
-  UnorderedListOutlined,
 } from '@ant-design/icons'
-import { Avatar, Button, Layout, List, Popover, Skeleton, Slider, Tooltip, Typography } from 'antd'
+import { Avatar, Button, Layout, Slider, Tooltip, Typography } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 
+import { QueueDrawer } from '@/components/player/queue-drawer'
 import { usePlayerStore } from '@/store/player-store'
 import type { PlayerSong } from '@/types/player'
 
@@ -218,13 +216,18 @@ export function PlayerBar() {
     if (typeof nextVolume === 'number') setVolume(nextVolume / 100)
   }
 
-  function handleQueuePopoverOpenChange(isOpen: boolean) {
-    setIsQueueOpen(isOpen)
-    setIsQueuePreparing(isOpen)
+  function handleQueuePanelOpen() {
+    setIsQueueOpen(true)
+    setIsQueuePreparing(true)
+
+    requestAnimationFrame(() => {
+      setIsQueuePreparing(false)
+    })
   }
 
-  function handleQueuePopoverAfterOpenChange(isOpen: boolean) {
-    if (isOpen) setIsQueuePreparing(false)
+  function handleQueuePanelClose() {
+    setIsQueueOpen(false)
+    setIsQueuePreparing(false)
   }
 
   const totalDuration = duration || (currentSong ? currentSong.duration / 1000 : 0)
@@ -232,74 +235,19 @@ export function PlayerBar() {
   const canPlayNext = currentIndex >= 0 && currentIndex < queue.length - 1
   const isQueueLoading = isQueueHydrating || isQueuePreparing
 
-  const queueContent = (
-    <div className="w-80 max-w-[calc(100vw-2rem)] max-h-[calc(100vh-10rem)] overflow-y-auto pr-1">
-      {isQueueLoading ? (
-        <div className="space-y-4 p-2">
-          {Array.from({ length: 4 }, (_, index) => (
-            <Skeleton key={index} active avatar paragraph={{ rows: 1 }} title={false} />
-          ))}
-        </div>
-      ) : (
-        <List
-          size="small"
-          locale={{ emptyText: '播放队列还是空的' }}
-          rowKey={song => String(song.id)}
-          dataSource={queue}
-          renderItem={(song, index) => {
-            const isCurrentSong = index === currentIndex
-
-            return (
-              <List.Item
-                className={isCurrentSong ? '!bg-violet-50' : ''}
-                actions={[
-                  <Button
-                    key="play"
-                    type="text"
-                    shape="circle"
-                    size="small"
-                    aria-label={`播放 ${song.name}`}
-                    disabled={isLoadingAudio}
-                    onClick={() => handleSelectQueueSong(index)}
-                    icon={<PlayCircleFilled className={isCurrentSong ? '!text-violet-500' : ''} />}
-                  />,
-                  <Button
-                    key="remove"
-                    type="text"
-                    danger
-                    shape="circle"
-                    size="small"
-                    aria-label={`从队列移除 ${song.name}`}
-                    title={isCurrentSong ? '正在播放的歌曲不能在这里移除' : '移出队列'}
-                    disabled={isCurrentSong}
-                    onClick={() => removeFromQueue(index)}
-                    icon={<DeleteOutlined />}
-                  />,
-                ]}
-              >
-                <List.Item.Meta
-                  avatar={
-                    <Avatar shape="square" size={36} src={song.coverUrl}>
-                      {song.name.slice(0, 1)}
-                    </Avatar>
-                  }
-                  title={
-                    <Typography.Text className={isCurrentSong ? '!text-violet-700' : ''} ellipsis>
-                      {song.name}
-                    </Typography.Text>
-                  }
-                  description={<Typography.Text type="secondary" ellipsis>{song.artists}</Typography.Text>}
-                />
-              </List.Item>
-            )
-          }}
-        />
-      )}
-    </div>
-  )
-
   return (
-    <Layout.Footer className="!fixed !bottom-0 !left-0 !right-0 !z-30 !flex !min-h-24 !items-center !gap-4 !border-t !border-slate-200 !bg-white/95 !px-4 !py-3 !backdrop-blur sm:!px-8">
+    <>
+      <QueueDrawer
+        open={isQueueOpen}
+        isLoading={isQueueLoading}
+        queue={queue}
+        currentIndex={currentIndex}
+        isLoadingAudio={isLoadingAudio}
+        onClose={handleQueuePanelClose}
+        onSelect={handleSelectQueueSong}
+        onRemove={removeFromQueue}
+      />
+      <Layout.Footer className="!fixed !bottom-0 !left-0 !right-0 !z-30 !flex !min-h-24 !items-center !gap-4 !border-t !border-[#dfe4e7] !bg-white !px-12 !py-3">
       <audio
         ref={audioRef}
         preload="metadata"
@@ -328,11 +276,11 @@ export function PlayerBar() {
           shape="square"
           size={56}
           src={currentSong?.coverUrl}
-          className="!bg-gradient-to-br !from-violet-500 !to-fuchsia-500"
+          className="!shrink-0 !bg-[#42a5f5]"
         >
           {currentSong?.name.slice(0, 1) ?? '♪'}
         </Avatar>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <Typography.Text className="!block !truncate !font-medium">
             {currentSong?.name ?? '暂未播放'}
           </Typography.Text>
@@ -344,7 +292,7 @@ export function PlayerBar() {
           </Typography.Text>
         </div>
         <Tooltip title="收藏功能请在歌曲列表中使用爱心按钮">
-          <Button type="text" shape="circle" disabled icon={<HeartOutlined />} />
+          <Button className="shrink-0" type="text" shape="circle" disabled icon={<HeartOutlined />} />
         </Tooltip>
       </div>
 
@@ -407,27 +355,17 @@ export function PlayerBar() {
           tooltip={{ open: false }}
           onChange={handleVolumeChange}
         />
-        <Popover
-          placement="topRight"
-          autoAdjustOverflow={false}
-          open={isQueueOpen}
-          fresh
-          title={isQueueLoading ? '播放队列（加载中）' : `播放队列（${queue.length} 首）`}
-          content={queueContent}
-          trigger="click"
-          onOpenChange={handleQueuePopoverOpenChange}
-          afterOpenChange={handleQueuePopoverAfterOpenChange}
-          styles={{ content: { maxHeight: 'calc(100vh - 10rem)', overflowY: 'auto' } }}
+        <button
+          type="button"
+          disabled={!isQueueHydrating && queue.length === 0}
+          aria-label={isQueueLoading ? '正在加载播放列表' : `打开播放列表，共 ${queue.length} 首歌`}
+          onClick={handleQueuePanelOpen}
+          className="grid h-8 w-8 place-items-center rounded-full text-lg text-[#52616a] hover:bg-[#eaf6ff] hover:text-[#1e88e5] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <Button
-            type="text"
-            shape="circle"
-            disabled={!isQueueHydrating && queue.length === 0}
-            aria-label={isQueueLoading ? '正在加载播放队列' : `打开播放队列，共 ${queue.length} 首歌`}
-            icon={<UnorderedListOutlined />}
-          />
-        </Popover>
+          ≡
+        </button>
       </div>
-    </Layout.Footer>
+      </Layout.Footer>
+    </>
   )
 }

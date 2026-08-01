@@ -47,8 +47,11 @@ export default function LoginPage() {
   }
 
   return (
-    <Card className="shadow-xl shadow-slate-200/70" styles={{ body: { padding: 32 } }}>
-      <Typography.Title level={2} className="!mb-2">
+    <Card styles={{ body: { padding: 36 } }}>
+      <Typography.Text className="!text-xs !font-semibold !tracking-[0.18em] !text-[#1e88e5]">
+        WELCOME BACK
+      </Typography.Text>
+      <Typography.Title level={2} className="!mb-2 !mt-3 !tracking-[-0.03em]">
         欢迎回来
       </Typography.Title>
       <Typography.Paragraph type="secondary">
@@ -84,7 +87,7 @@ export default function LoginPage() {
       </Form>
 
       <Typography.Paragraph type="secondary" className="!mb-0 !mt-6 !text-center">
-        还没有账号？<Link className="text-violet-600" href="/register">去注册</Link>
+        还没有账号？<Link className="text-[#1e88e5]" href="/register">去注册</Link>
       </Typography.Paragraph>
     </Card>
   )

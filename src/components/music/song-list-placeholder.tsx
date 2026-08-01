@@ -11,7 +11,7 @@ const placeholderTracks = [
 
 export function SongListPlaceholder() {
   return (
-    <Card className="shadow-sm">
+    <Card>
       <List
         dataSource={placeholderTracks}
         renderItem={(title, index) => (
@@ -21,7 +21,7 @@ export function SongListPlaceholder() {
               title={<Typography.Text>{title}</Typography.Text>}
               description="歌手名称 · 专辑名称"
             />
-            <Button type="text" shape="circle" icon={<PlayCircleFilled className="!text-violet-500" />} />
+            <Button type="text" shape="circle" icon={<PlayCircleFilled className="!text-[#42a5f5]" />} />
           </List.Item>
         )}
       />

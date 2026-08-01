@@ -236,13 +236,13 @@ export default function SearchPage() {
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-5 py-8 sm:px-8 lg:px-10 lg:py-12">
+    <main className="desktop-page">
       <PageHeading
         eyebrow="发现音乐"
         title="搜索音乐"
         description="输入关键词，从本地音乐 API 搜索歌曲、歌手和公开歌单。"
       />
-      <Card className="mb-6 shadow-sm">
+      <Card className="mb-6" styles={{ body: { padding: 28 } }}>
         <Space.Compact className="w-full">
           <Input
             size="large"
@@ -279,7 +279,7 @@ export default function SearchPage() {
 
       {!isLoading && songCount !== null ? (
         <Card
-          className="shadow-sm"
+          styles={{ body: { padding: 24 } }}
           title={`搜索结果${songCount > 0 ? `（共 ${songCount} 首）` : ''}`}
         >
           <List
@@ -306,7 +306,7 @@ export default function SearchPage() {
                       onClick={() => void handleLike(song)}
                       icon={
                         isLiked ? (
-                          <HeartFilled className="!text-rose-500" />
+                          <HeartFilled className="!text-[#42a5f5]" />
                         ) : (
                           <HeartOutlined />
                         )
@@ -319,7 +319,7 @@ export default function SearchPage() {
                       loading={playingSongId === song.id}
                       disabled={playingSongId !== null}
                       onClick={() => void handlePlay(song)}
-                      icon={<PlayCircleFilled className="!text-violet-500" />}
+                      icon={<PlayCircleFilled className="!text-[#42a5f5]" />}
                     />,
                   ]}
                 >

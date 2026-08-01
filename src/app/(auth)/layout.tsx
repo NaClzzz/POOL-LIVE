@@ -13,16 +13,13 @@ export default async function AuthLayout({ children }: { children: ReactNode }) 
   if (user) redirect('/')
 
   return (
-    <main className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_top_left,_#e9d5ff,_transparent_35%),radial-gradient(circle_at_bottom_right,_#bae6fd,_transparent_30%),#f8fafc] px-5 py-10">
-      <div className="w-full max-w-md">
-        <Link
-          href="/"
-          className="mb-8 flex items-center justify-center gap-2 text-xl font-semibold text-slate-900"
-        >
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white">
-            ♪
+    <main className="auth-shell">
+      <div className="auth-panel">
+        <Link href="/" className="mb-9 flex items-center gap-3 text-xl font-semibold tracking-[0.12em] text-[#222a30]">
+          <span className="grid h-10 w-10 place-items-center rounded-full bg-[#42a5f5] font-display text-2xl font-normal text-white">
+            P
           </span>
-          音屿
+          POOL
         </Link>
         {children}
       </div>

@@ -2,7 +2,10 @@ import { streamText } from 'ai'
 import { NextResponse } from 'next/server'
 
 import { BailianConfigurationError, createBailianModel } from '@/lib/ai/bailian'
-import { createClient } from '@/lib/supabase/server'
+import { getCurrentSession } from '@/lib/auth-session'
+import { database } from '@/lib/database'
+
+export const runtime = 'nodejs'
 
 const COOLDOWN_MS = 10_000
 const LYRICS_SAMPLE_SIZE = 5
@@ -19,6 +22,10 @@ type LikedSongRow = {
   name: string
   artists: string
   album_name: string
+}
+
+type DatabaseLikedSongRow = Omit<LikedSongRow, 'song_id'> & {
+  song_id: string
 }
 
 type LyricResponse = {
@@ -162,15 +169,13 @@ function makePrompt(
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const session = await getCurrentSession()
 
-  if (!user) {
+  if (!session) {
     return NextResponse.json({ message: '请先登录后再生成歌单赏析。' }, { status: 401 })
   }
 
+  const user = session.user
   const guard = acquireRequestGuard(user.id)
 
   if (!guard.allowed) {
@@ -188,17 +193,17 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { data, error } = await supabase
-      .from('liked_songs')
-      .select('song_id,name,artists,album_name')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
+    const likedSongsResult = await database.query<DatabaseLikedSongRow>(
+      `
+        SELECT song_id::text AS song_id, name, artists, album_name
+        FROM public.liked_songs
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+      `,
+      [user.id],
+    )
 
-    if (error) {
-      throw new Error('Failed to load liked songs')
-    }
-
-    const likedSongs = (data ?? [])
+    const likedSongs = likedSongsResult.rows
       .map(song => ({
         song_id: Number(song.song_id),
         name: String(song.name ?? '').trim(),

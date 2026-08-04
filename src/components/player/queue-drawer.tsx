@@ -1,5 +1,9 @@
-import type { PlayerSong } from '@/types/player'
+import { DragOutlined } from '@ant-design/icons'
+import { DragDropProvider } from '@dnd-kit/react'
+import { isSortable, useSortable } from '@dnd-kit/react/sortable'
 import { useEffect, useState } from 'react'
+
+import type { PlayerSong } from '@/types/player'
 
 type QueueDrawerProps = {
   open: boolean
@@ -10,6 +14,87 @@ type QueueDrawerProps = {
   onClose: () => void
   onSelect: (index: number) => void
   onRemove: (index: number) => void
+  onMove: (fromIndex: number, toIndex: number) => void
+}
+
+type SortableQueueItemProps = {
+  song: PlayerSong
+  index: number
+  isCurrentSong: boolean
+  isLoadingAudio: boolean
+  onSelect: (index: number) => void
+  onRemove: (index: number) => void
+}
+
+function SortableQueueItem({
+  song,
+  index,
+  isCurrentSong,
+  isLoadingAudio,
+  onSelect,
+  onRemove,
+}: SortableQueueItemProps) {
+  const { handleRef, isDragging, ref } = useSortable({ id: song.id, index })
+
+  return (
+    <div
+      ref={ref}
+      className={`grid grid-cols-[1fr_32px_32px] items-center gap-2 border-b border-[#edf0f2] py-3 ${
+        isCurrentSong ? 'bg-[#eaf6ff]' : ''
+      } ${isDragging ? 'opacity-50' : ''}`}
+    >
+      <button
+        type="button"
+        disabled={isLoadingAudio}
+        onClick={() => onSelect(index)}
+        className="grid min-w-0 grid-cols-[24px_44px_1fr] items-center gap-3 px-2 text-left disabled:cursor-not-allowed"
+      >
+        <span className={`text-xs ${isCurrentSong ? 'text-[#1e88e5]' : 'text-[#9aa5ac]'}`}>
+          {String(index + 1).padStart(2, '0')}
+        </span>
+        <span
+          className="grid h-11 w-11 place-items-center overflow-hidden bg-[#dceffa] text-xs font-semibold text-[#1e88e5]"
+          style={
+            song.coverUrl
+              ? {
+                  backgroundImage: `url(${song.coverUrl})`,
+                  backgroundPosition: 'center',
+                  backgroundSize: 'cover',
+                }
+              : undefined
+          }
+        >
+          {song.coverUrl ? null : song.name.slice(0, 1)}
+        </span>
+        <span className="min-w-0">
+          <span className={`block truncate text-sm font-medium ${isCurrentSong ? 'text-[#1e88e5]' : 'text-[#222a30]'}`}>
+            {song.name}
+          </span>
+          <span className="mt-1 block truncate text-xs text-[#71808a]">{song.artists}</span>
+        </span>
+      </button>
+      <button
+        ref={handleRef}
+        type="button"
+        aria-label={`拖拽排序 ${song.name}`}
+        title="拖拽排序"
+        onClick={event => event.stopPropagation()}
+        className="grid h-8 w-8 place-items-center rounded-full text-[#9aa5ac] hover:bg-[#eaf6ff] hover:text-[#1e88e5]"
+      >
+        <DragOutlined />
+      </button>
+      <button
+        type="button"
+        aria-label={`从播放列表移除 ${song.name}`}
+        title={isCurrentSong ? '正在播放的歌曲不能在这里移除' : '移出列表'}
+        disabled={isCurrentSong}
+        onClick={() => onRemove(index)}
+        className="grid h-8 w-8 place-items-center rounded-full text-lg text-[#9aa5ac] hover:bg-[#fff1f0] hover:text-[#d64545] disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        ×
+      </button>
+    </div>
+  )
 }
 
 export function QueueDrawer({
@@ -21,6 +106,7 @@ export function QueueDrawer({
   onClose,
   onSelect,
   onRemove,
+  onMove,
 }: QueueDrawerProps) {
   const [shouldRender, setShouldRender] = useState(open)
   const [isVisible, setIsVisible] = useState(open)
@@ -103,53 +189,29 @@ export function QueueDrawer({
               播放列表还是空的
             </div>
           ) : (
-            <div>
-              {queue.map((song, index) => {
-                const isCurrentSong = index === currentIndex
+            <DragDropProvider
+              onDragEnd={event => {
+                if (event.canceled) return
 
-                return (
-                  <div
-                    key={`${song.id}-${index}`}
-                    className={`grid grid-cols-[1fr_32px] items-center gap-2 border-b border-[#edf0f2] py-3 ${
-                      isCurrentSong ? 'bg-[#eaf6ff]' : ''
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      disabled={isLoadingAudio}
-                      onClick={() => onSelect(index)}
-                      className="grid min-w-0 grid-cols-[24px_44px_1fr] items-center gap-3 px-2 text-left disabled:cursor-not-allowed"
-                    >
-                      <span className={`text-xs ${isCurrentSong ? 'text-[#1e88e5]' : 'text-[#9aa5ac]'}`}>
-                        {String(index + 1).padStart(2, '0')}
-                      </span>
-                      <span
-                        className="grid h-11 w-11 place-items-center overflow-hidden bg-[#dceffa] text-xs font-semibold text-[#1e88e5]"
-                        style={song.coverUrl ? { backgroundImage: `url(${song.coverUrl})`, backgroundPosition: 'center', backgroundSize: 'cover' } : undefined}
-                      >
-                        {song.coverUrl ? null : song.name.slice(0, 1)}
-                      </span>
-                      <span className="min-w-0">
-                        <span className={`block truncate text-sm font-medium ${isCurrentSong ? 'text-[#1e88e5]' : 'text-[#222a30]'}`}>
-                          {song.name}
-                        </span>
-                        <span className="mt-1 block truncate text-xs text-[#71808a]">{song.artists}</span>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`从播放列表移除 ${song.name}`}
-                      title={isCurrentSong ? '正在播放的歌曲不能在这里移除' : '移出列表'}
-                      disabled={isCurrentSong}
-                      onClick={() => onRemove(index)}
-                      className="grid h-8 w-8 place-items-center rounded-full text-lg text-[#9aa5ac] hover:bg-[#fff1f0] hover:text-[#d64545] disabled:cursor-not-allowed disabled:opacity-30"
-                    >
-                      ×
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
+                const source = event.operation.source
+
+                if (isSortable(source) && source.initialIndex !== source.index) {
+                  onMove(source.initialIndex, source.index)
+                }
+              }}
+            >
+              {queue.map((song, index) => (
+                <SortableQueueItem
+                  key={song.id}
+                  song={song}
+                  index={index}
+                  isCurrentSong={index === currentIndex}
+                  isLoadingAudio={isLoadingAudio}
+                  onSelect={onSelect}
+                  onRemove={onRemove}
+                />
+              ))}
+            </DragDropProvider>
           )}
         </div>
       </aside>

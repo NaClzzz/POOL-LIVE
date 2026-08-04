@@ -2,15 +2,12 @@ import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
-import { createClient } from '@/lib/supabase/server'
+import { getCurrentSession } from '@/lib/auth-session'
 
 export default async function AuthLayout({ children }: { children: ReactNode }) {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const session = await getCurrentSession()
 
-  if (user) redirect('/')
+  if (session) redirect('/')
 
   return (
     <main className="auth-shell">

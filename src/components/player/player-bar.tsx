@@ -5,20 +5,29 @@ import {
   CustomerServiceOutlined,
   HeartOutlined,
   PauseOutlined,
+  RetweetOutlined,
   StepBackwardOutlined,
   StepForwardOutlined,
 } from '@ant-design/icons'
 import { Avatar, Button, Layout, Slider, Tooltip, Typography } from 'antd'
+import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 
 import { QueueDrawer } from '@/components/player/queue-drawer'
+import { RoomPlayerBar } from '@/components/room/room-player-bar'
 import { usePlayerStore } from '@/store/player-store'
+import type { LikedSong } from '@/types/liked-song'
 import type { PlayerSong } from '@/types/player'
 
 type PlayUrlResponse = {
   data?: Array<{
     url: string | null
   }>
+  message?: string
+}
+
+type LikesResponse = {
+  songs?: LikedSong[]
   message?: string
 }
 
@@ -33,14 +42,25 @@ function formatTime(time: number) {
 }
 
 export function PlayerBar() {
+  const pathname = usePathname()
+
+  if (pathname.startsWith('/rooms/')) return <RoomPlayerBar />
+
+  return <PersonalPlayerBar />
+}
+
+function PersonalPlayerBar() {
   const audioRef = useRef<HTMLAudioElement>(null)
   const audioRequestIdRef = useRef(0)
   const [isQueueHydrating, setIsQueueHydrating] = useState(true)
   const [isQueueOpen, setIsQueueOpen] = useState(false)
   const [isQueuePreparing, setIsQueuePreparing] = useState(false)
+  const [isSwitchingPlaybackMode, setIsSwitchingPlaybackMode] = useState(false)
   const currentSong = usePlayerStore(state => state.currentSong)
   const queue = usePlayerStore(state => state.queue)
   const currentIndex = usePlayerStore(state => state.currentIndex)
+  const queueSource = usePlayerStore(state => state.queueSource)
+  const playbackMode = usePlayerStore(state => state.playbackMode)
   const audioUrl = usePlayerStore(state => state.audioUrl)
   const isPlaying = usePlayerStore(state => state.isPlaying)
   const isLoadingAudio = usePlayerStore(state => state.isLoadingAudio)
@@ -52,6 +72,11 @@ export function PlayerBar() {
   const nextSong = usePlayerStore(state => state.nextSong)
   const playPreviousSong = usePlayerStore(state => state.previousSong)
   const removeFromQueue = usePlayerStore(state => state.removeFromQueue)
+  const moveQueueSong = usePlayerStore(state => state.moveQueueSong)
+  const setLocalPlaybackMode = usePlayerStore(state => state.setLocalPlaybackMode)
+  const applyLikedQueueForPlaybackMode = usePlayerStore(
+    state => state.applyLikedQueueForPlaybackMode,
+  )
   const restoreQueue = usePlayerStore(state => state.restoreQueue)
   const setAudioSource = usePlayerStore(state => state.setAudioSource)
   const setIsLoadingAudio = usePlayerStore(state => state.setIsLoadingAudio)
@@ -149,6 +174,15 @@ export function PlayerBar() {
 
       if (audioRequestIdRef.current !== requestId) return
 
+      // The URL may be identical when the playing row is dragged. Reset the
+      // native element explicitly so that case reliably restarts at 0 seconds.
+      const audio = audioRef.current
+      if (audio) {
+        audio.pause()
+        audio.src = nextAudioUrl
+        audio.load()
+      }
+
       setAudioSource(nextAudioUrl, shouldPlay)
     } catch (error) {
       if (audioRequestIdRef.current !== requestId) return
@@ -230,9 +264,55 @@ export function PlayerBar() {
     setIsQueuePreparing(false)
   }
 
+  async function handlePlaybackModeSwitch() {
+    if (isSwitchingPlaybackMode || queue.length === 0) return
+
+    const nextMode = playbackMode === 'sequential' ? 'shuffle' : 'sequential'
+    setPlaybackError(null)
+
+    if (queueSource !== 'liked') {
+      setLocalPlaybackMode(nextMode)
+      return
+    }
+
+    setIsSwitchingPlaybackMode(true)
+
+    try {
+      const response = await fetch('/api/likes')
+      const data = (await response.json()) as LikesResponse
+
+      if (!response.ok) {
+        throw new Error(data.message || '读取最新喜欢列表失败，请稍后再试')
+      }
+
+      const latestLikedQueue = (data.songs ?? []).map(song => ({
+        id: song.song_id,
+        name: song.name,
+        artists: song.artists,
+        albumName: song.album_name,
+        coverUrl: song.cover_url ?? undefined,
+        duration: song.duration_ms,
+      }))
+
+      applyLikedQueueForPlaybackMode(latestLikedQueue, nextMode)
+    } catch (error) {
+      setPlaybackError(
+        error instanceof Error ? error.message : '切换播放模式失败，请稍后再试',
+      )
+    } finally {
+      setIsSwitchingPlaybackMode(false)
+    }
+  }
+
+  function handleMoveQueueSong(fromIndex: number, toIndex: number) {
+    const movedCurrentSong = moveQueueSong(fromIndex, toIndex)
+
+    if (movedCurrentSong) void loadAudioForSong(movedCurrentSong, true)
+  }
+
   const totalDuration = duration || (currentSong ? currentSong.duration / 1000 : 0)
-  const canPlayPrevious = currentIndex > 0
-  const canPlayNext = currentIndex >= 0 && currentIndex < queue.length - 1
+  const canPlayPrevious = currentIndex >= 0 && queue.length > 0
+  const canPlayNext = queue.length > 0
   const isQueueLoading = isQueueHydrating || isQueuePreparing
 
   return (
@@ -246,6 +326,7 @@ export function PlayerBar() {
         onClose={handleQueuePanelClose}
         onSelect={handleSelectQueueSong}
         onRemove={removeFromQueue}
+        onMove={handleMoveQueueSong}
       />
       <Layout.Footer className="!fixed !bottom-0 !left-0 !right-0 !z-30 !flex !min-h-24 !items-center !gap-4 !border-t !border-[#dfe4e7] !bg-white !px-12 !py-3">
       <audio
@@ -298,6 +379,16 @@ export function PlayerBar() {
 
       <div className="absolute left-1/2 top-1/2 hidden w-[min(560px,46vw)] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 md:flex">
         <div className="flex items-center gap-1">
+          <Tooltip title={playbackMode === 'sequential' ? '顺序播放：点击切换为随机排序' : '随机排序：点击切换为顺序播放'}>
+            <Button
+              type="text"
+              shape="circle"
+              loading={isSwitchingPlaybackMode}
+              disabled={queue.length === 0 || isLoadingAudio}
+              onClick={() => void handlePlaybackModeSwitch()}
+              icon={<RetweetOutlined className={playbackMode === 'shuffle' ? 'text-[#1e88e5]' : undefined} />}
+            />
+          </Tooltip>
           <Tooltip title="上一首">
             <Button
               type="text"

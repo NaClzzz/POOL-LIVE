@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
-import { createClient } from '@/lib/supabase/client'
+import { authClient } from '@/lib/auth-client'
 
 type LoginValues = {
   email: string
@@ -30,20 +30,24 @@ export default function LoginPage() {
     setIsSubmitting(true)
     setErrorMessage('')
 
-    const supabase = createClient()
-    const { error } = await supabase.auth.signInWithPassword({
-      email: values.email.trim(),
-      password: values.password,
-    })
+    try {
+      const { error } = await authClient.signIn.email({
+        email: values.email.trim(),
+        password: values.password,
+      })
 
-    if (error) {
-      setErrorMessage(error.message)
+      if (error) {
+        setErrorMessage(error.message ?? '邮箱或密码不正确。')
+        return
+      }
+
+      router.replace(getSafeNextPath())
+      router.refresh()
+    } catch {
+      setErrorMessage('登录服务暂时不可用，请稍后重试。')
+    } finally {
       setIsSubmitting(false)
-      return
     }
-
-    router.replace(getSafeNextPath())
-    router.refresh()
   }
 
   return (

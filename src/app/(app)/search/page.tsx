@@ -21,7 +21,6 @@ import {
 import { useEffect, useState } from 'react'
 
 import { PageHeading } from '@/components/layout/page-heading'
-import { createClient } from '@/lib/supabase/client'
 import { usePlayerStore } from '@/store/player-store'
 import type { LikedSong } from '@/types/liked-song'
 
@@ -52,6 +51,16 @@ type PlayUrlResponse = {
   message?: string
 }
 
+type LikesResponse = {
+  songs?: LikedSong[]
+  message?: string
+}
+
+type LikeMutationResponse = {
+  message?: string
+  created?: boolean
+}
+
 const PAGE_SIZE = 20
 
 function formatDuration(duration: number) {
@@ -63,7 +72,6 @@ function formatDuration(duration: number) {
 }
 
 export default function SearchPage() {
-  const [supabase] = useState(createClient)
   const [keywords, setKeywords] = useState('')
   const [songs, setSongs] = useState<SearchSong[]>([])
   const [songCount, setSongCount] = useState<number | null>(null)
@@ -73,7 +81,6 @@ export default function SearchPage() {
   const [playingSongId, setPlayingSongId] = useState<number | null>(null)
   const [likingSongId, setLikingSongId] = useState<number | null>(null)
   const [likedSongIds, setLikedSongIds] = useState<Set<number>>(new Set())
-  const [userId, setUserId] = useState<string | null>(null)
   const [musicError, setMusicError] = useState('')
   const [likesError, setLikesError] = useState('')
   const startQueue = usePlayerStore(state => state.startQueue)
@@ -82,30 +89,22 @@ export default function SearchPage() {
     let isCurrent = true
 
     async function loadLikedSongIds() {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser()
+      try {
+        const response = await fetch('/api/likes')
+        const data = (await response.json()) as LikesResponse
 
-      if (!isCurrent) return
+        if (!response.ok) {
+          throw new Error(data.message || '读取收藏失败，请稍后再试。')
+        }
 
-      if (userError || !user) {
-        setLikesError('登录状态已失效，请重新登录后再收藏歌曲。')
-        return
+        if (!isCurrent) return
+
+        setLikedSongIds(new Set((data.songs ?? []).map(song => Number(song.song_id))))
+      } catch (error) {
+        if (!isCurrent) return
+
+        setLikesError(error instanceof Error ? error.message : '读取收藏失败，请稍后再试。')
       }
-
-      setUserId(user.id)
-
-      const { data, error } = await supabase.from('liked_songs').select('song_id')
-
-      if (!isCurrent) return
-
-      if (error) {
-        setLikesError(`读取收藏失败：${error.message}`)
-        return
-      }
-
-      setLikedSongIds(new Set((data ?? []).map(song => Number(song.song_id))))
     }
 
     void loadLikedSongIds()
@@ -113,7 +112,7 @@ export default function SearchPage() {
     return () => {
       isCurrent = false
     }
-  }, [supabase])
+  }, [])
 
   async function searchSongs(searchKeywords: string, page: number) {
     if (isLoading) return
@@ -162,16 +161,12 @@ export default function SearchPage() {
   }
 
   async function handleLike(song: SearchSong) {
-    if (!userId || likingSongId !== null) {
-      if (!userId) setLikesError('登录状态已失效，请重新登录后再收藏歌曲。')
-      return
-    }
+    if (likingSongId !== null) return
 
     setLikingSongId(song.id)
     setLikesError('')
 
-    const likedSong: LikedSong = {
-      user_id: userId,
+    const likedSong: Omit<LikedSong, 'created_at'> = {
       song_id: song.id,
       name: song.name,
       artists: song.artists.map(artist => artist.name).join(' / ') || '未知歌手',
@@ -181,18 +176,46 @@ export default function SearchPage() {
     }
 
     try {
-      const { error } = await supabase
-        .from('liked_songs')
-        .upsert(likedSong, {
-          onConflict: 'user_id,song_id',
-          ignoreDuplicates: true,
-        })
+      const response = await fetch('/api/likes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(likedSong),
+      })
+      const data = (await response.json()) as LikeMutationResponse
 
-      if (error) throw error
+      if (!response.ok) {
+        throw new Error(data.message || '收藏歌曲失败，请稍后再试。')
+      }
 
       setLikedSongIds(previous => new Set(previous).add(song.id))
     } catch (error) {
       setLikesError(error instanceof Error ? `收藏失败：${error.message}` : '收藏失败，请稍后再试')
+    } finally {
+      setLikingSongId(null)
+    }
+  }
+
+  async function handleUnlike(songId: number) {
+    if (likingSongId !== null) return
+
+    setLikingSongId(songId)
+    setLikesError('')
+
+    try {
+      const response = await fetch(`/api/likes/${songId}`, { method: 'DELETE' })
+      const data = (await response.json()) as LikeMutationResponse
+
+      if (!response.ok) {
+        throw new Error(data.message || '取消收藏失败，请稍后再试。')
+      }
+
+      setLikedSongIds(previous => {
+        const next = new Set(previous)
+        next.delete(songId)
+        return next
+      })
+    } catch (error) {
+      setLikesError(error instanceof Error ? error.message : '取消收藏失败，请稍后再试。')
     } finally {
       setLikingSongId(null)
     }
@@ -227,7 +250,7 @@ export default function SearchPage() {
       }))
       const queueIndex = queue.findIndex(queueSong => queueSong.id === song.id)
 
-      startQueue(queue, queueIndex, audioUrl)
+      startQueue(queue, queueIndex, audioUrl, 'search', 'sequential')
     } catch (error) {
       setMusicError(error instanceof Error ? error.message : '歌曲播放失败，请稍后再试')
     } finally {
@@ -299,11 +322,13 @@ export default function SearchPage() {
                       key="like"
                       type="text"
                       shape="circle"
-                      aria-label={isLiked ? '已收藏' : '收藏歌曲'}
-                      title={isLiked ? '已收藏' : '收藏到我喜欢的音乐'}
+                      aria-label={isLiked ? '取消收藏歌曲' : '收藏歌曲'}
+                      title={isLiked ? '取消收藏' : '收藏到我喜欢的音乐'}
                       loading={likingSongId === song.id}
-                      disabled={isLiked || likingSongId !== null}
-                      onClick={() => void handleLike(song)}
+                      disabled={likingSongId !== null}
+                      onClick={() =>
+                        void (isLiked ? handleUnlike(song.id) : handleLike(song))
+                      }
                       icon={
                         isLiked ? (
                           <HeartFilled className="!text-[#42a5f5]" />

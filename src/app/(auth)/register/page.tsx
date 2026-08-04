@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
-import { createClient } from '@/lib/supabase/client'
+import { authClient } from '@/lib/auth-client'
 
 type RegisterValues = {
   displayName: string
@@ -17,54 +17,31 @@ type RegisterValues = {
 export default function RegisterPage() {
   const router = useRouter()
   const [errorMessage, setErrorMessage] = useState('')
-  const [successMessage, setSuccessMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   async function handleRegister(values: RegisterValues) {
     setIsSubmitting(true)
     setErrorMessage('')
-    setSuccessMessage('')
 
-    const displayName = values.displayName.trim()
-    const supabase = createClient()
-    const { data, error } = await supabase.auth.signUp({
-      email: values.email.trim(),
-      password: values.password,
-      options: {
-        data: { display_name: displayName },
-        emailRedirectTo: `${window.location.origin}/auth/confirm`,
-      },
-    })
+    try {
+      const { error } = await authClient.signUp.email({
+        name: values.displayName.trim(),
+        email: values.email.trim(),
+        password: values.password,
+      })
 
-    if (error) {
-      setErrorMessage(error.message)
-      setIsSubmitting(false)
-      return
-    }
-
-    if (data.session && data.user) {
-      const { error: profileError } = await supabase.from('profiles').upsert(
-        {
-          id: data.user.id,
-          display_name: displayName,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'id' },
-      )
-
-      if (profileError) {
-        setErrorMessage('账号已创建，但个人资料初始化失败，请稍后重新登录。')
-        setIsSubmitting(false)
+      if (error) {
+        setErrorMessage(error.message ?? '注册失败，请检查输入后重试。')
         return
       }
 
       router.replace('/')
       router.refresh()
-      return
+    } catch {
+      setErrorMessage('注册服务暂时不可用，请稍后重试。')
+    } finally {
+      setIsSubmitting(false)
     }
-
-    setSuccessMessage('注册成功，请前往邮箱点击验证链接后再登录。')
-    setIsSubmitting(false)
   }
 
   return (
@@ -82,10 +59,6 @@ export default function RegisterPage() {
       {errorMessage ? (
         <Alert className="mb-5" type="error" showIcon message={errorMessage} />
       ) : null}
-      {successMessage ? (
-        <Alert className="mb-5" type="success" showIcon message={successMessage} />
-      ) : null}
-
       <Form<RegisterValues> layout="vertical" className="mt-7" onFinish={handleRegister}>
         <Form.Item
           label="昵称"
@@ -109,12 +82,12 @@ export default function RegisterPage() {
           name="password"
           rules={[
             { required: true, message: '请输入密码。' },
-            { min: 6, message: '密码至少需要 6 位。' },
+            { min: 8, message: '密码至少需要 8 位。' },
           ]}
         >
           <Input.Password
             prefix={<LockOutlined />}
-            placeholder="至少 6 位密码"
+            placeholder="至少 8 位密码"
             autoComplete="new-password"
           />
         </Form.Item>

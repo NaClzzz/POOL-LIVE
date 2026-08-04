@@ -1,5 +1,4 @@
 export type LikedSong = {
-  user_id: string
   song_id: number
   name: string
   artists: string
@@ -8,3 +7,5 @@ export type LikedSong = {
   duration_ms: number
   created_at?: string
 }
+
+export type LikedSongInput = Omit<LikedSong, 'created_at'>

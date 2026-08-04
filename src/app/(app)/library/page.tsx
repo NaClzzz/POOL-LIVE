@@ -12,9 +12,8 @@ import { Alert, Avatar, Button, Card, Input, List, Popconfirm, Space, Spin, Typo
 import { useEffect, useRef, useState } from 'react'
 
 import { PageHeading } from '@/components/layout/page-heading'
-import { createClient } from '@/lib/supabase/client'
 import { usePlayerStore } from '@/store/player-store'
-import type { LikedSong } from '@/types/liked-song'
+import type { LikedSong, LikedSongInput } from '@/types/liked-song'
 
 type PlaylistSong = {
   id: number
@@ -29,6 +28,23 @@ type PlaylistSong = {
 
 type PlaylistTracksResponse = {
   songs?: PlaylistSong[]
+  message?: string
+}
+
+type LikesResponse = {
+  songs?: LikedSong[]
+  message?: string
+}
+
+type ImportLikesResponse = {
+  addedSongIds?: number[]
+  addedCount?: number
+  skippedCount?: number
+  message?: string
+}
+
+type MutationResponse = {
+  deletedCount?: number
   message?: string
 }
 
@@ -59,9 +75,8 @@ function extractPlaylistId(value: string) {
   return trimmedValue.match(/[?&]id=(\d+)/)?.[1] ?? null
 }
 
-function makeLikedSong(song: PlaylistSong, userId: string): LikedSong {
+function makeLikedSong(song: PlaylistSong): LikedSongInput {
   return {
-    user_id: userId,
     song_id: song.id,
     name: song.name,
     artists: song.ar?.map(artist => artist.name).filter(Boolean).join(' / ') || '未知歌手',
@@ -72,9 +87,7 @@ function makeLikedSong(song: PlaylistSong, userId: string): LikedSong {
 }
 
 export default function LibraryPage() {
-  const [supabase] = useState(createClient)
   const [likedSongs, setLikedSongs] = useState<LikedSong[]>([])
-  const [userId, setUserId] = useState<string | null>(null)
   const [playlistInput, setPlaylistInput] = useState('')
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(true)
   const [isImporting, setIsImporting] = useState(false)
@@ -89,41 +102,30 @@ export default function LibraryPage() {
   const [isGeneratingAnalysis, setIsGeneratingAnalysis] = useState(false)
   const analysisAbortRef = useRef<AbortController | null>(null)
   const startQueue = usePlayerStore(state => state.startQueue)
+  const playbackMode = usePlayerStore(state => state.playbackMode)
 
   useEffect(() => {
     let isCurrent = true
 
     async function loadLikedSongs() {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser()
+      try {
+        const response = await fetch('/api/likes')
+        const data = (await response.json()) as LikesResponse
 
-      if (!isCurrent) return
+        if (!response.ok) {
+          throw new Error(data.message || '读取喜欢的音乐失败，请稍后再试。')
+        }
 
-      if (userError || !user) {
-        setLibraryError('读取喜欢的音乐失败：登录状态已失效，请重新登录。')
-        setIsLoadingLibrary(false)
-        return
+        if (!isCurrent) return
+
+        setLikedSongs(data.songs ?? [])
+      } catch (error) {
+        if (!isCurrent) return
+
+        setLibraryError(error instanceof Error ? error.message : '读取喜欢的音乐失败，请稍后再试。')
+      } finally {
+        if (isCurrent) setIsLoadingLibrary(false)
       }
-
-      setUserId(user.id)
-
-      const { data, error } = await supabase
-        .from('liked_songs')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      if (!isCurrent) return
-
-      if (error) {
-        setLibraryError(`读取喜欢的音乐失败：${error.message}`)
-        setIsLoadingLibrary(false)
-        return
-      }
-
-      setLikedSongs((data ?? []) as LikedSong[])
-      setIsLoadingLibrary(false)
     }
 
     void loadLikedSongs()
@@ -131,7 +133,7 @@ export default function LibraryPage() {
     return () => {
       isCurrent = false
     }
-  }, [supabase])
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -147,46 +149,51 @@ export default function LibraryPage() {
       return
     }
 
-    if (!userId) {
-      setActionError('登录状态已失效，请重新登录后再导入。')
-      return
-    }
-
     setIsImporting(true)
     setActionError('')
     setImportMessage('')
 
     try {
-      const response = await fetch(`/api/music/playlist/${playlistId}/tracks`)
-      const data = (await response.json()) as PlaylistTracksResponse
+      const tracksResponse = await fetch(`/api/music/playlist/${playlistId}/tracks`)
+      const tracksData = (await tracksResponse.json()) as PlaylistTracksResponse
 
-      if (!response.ok) {
-        throw new Error(data.message || '获取歌单歌曲失败')
+      if (!tracksResponse.ok) {
+        throw new Error(tracksData.message || '获取歌单歌曲失败。')
       }
 
-      const songs = (data.songs ?? []).filter(song => Number.isSafeInteger(song.id) && song.id > 0)
+      const songs = (tracksData.songs ?? []).filter(song => Number.isSafeInteger(song.id) && song.id > 0)
 
       if (songs.length === 0) {
         throw new Error('没有获取到可导入的歌曲，请确认歌单 ID 和歌单公开状态。')
       }
 
-      const songsToImport = songs.map(song => makeLikedSong(song, userId))
-      const { error } = await supabase.from('liked_songs').upsert(songsToImport, {
-        onConflict: 'user_id,song_id',
-        ignoreDuplicates: true,
+      const songsToImport = songs.map(makeLikedSong)
+      const importResponse = await fetch('/api/likes/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ songs: songsToImport }),
       })
+      const importData = (await importResponse.json()) as ImportLikesResponse
 
-      if (error) throw error
+      if (!importResponse.ok) {
+        throw new Error(importData.message || '导入歌曲失败，请稍后再试。')
+      }
+
+      const addedSongIds = new Set(importData.addedSongIds ?? [])
 
       setLikedSongs(previous => {
         const existingSongIds = new Set(previous.map(song => song.song_id))
-        const newSongs = songsToImport.filter(song => !existingSongIds.has(song.song_id))
+        const newSongs = songsToImport.filter(
+          song => addedSongIds.has(song.song_id) && !existingSongIds.has(song.song_id),
+        )
 
         return [...newSongs, ...previous]
       })
-      setImportMessage(`已尝试导入 ${songsToImport.length} 首歌曲，重复歌曲会自动跳过。`)
+      setImportMessage(
+        `成功新增 ${importData.addedCount ?? 0} 首歌曲，跳过 ${importData.skippedCount ?? 0} 首重复歌曲。`,
+      )
     } catch (error) {
-      setActionError(error instanceof Error ? `导入失败：${error.message}` : '导入失败，请稍后再试')
+      setActionError(error instanceof Error ? `导入失败：${error.message}` : '导入失败，请稍后再试。')
     } finally {
       setIsImporting(false)
     }
@@ -204,7 +211,7 @@ export default function LibraryPage() {
       const audioUrl = data.data?.[0]?.url
 
       if (!response.ok) {
-        throw new Error(data.message || '获取播放地址失败，请稍后再试')
+        throw new Error(data.message || '获取播放地址失败，请稍后再试。')
       }
 
       if (!audioUrl) {
@@ -221,51 +228,50 @@ export default function LibraryPage() {
       }))
       const queueIndex = queue.findIndex(queueSong => queueSong.id === song.song_id)
 
-      startQueue(queue, queueIndex, audioUrl)
+      startQueue(queue, queueIndex, audioUrl, 'liked', playbackMode)
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : '歌曲播放失败，请稍后再试')
+      setActionError(error instanceof Error ? error.message : '歌曲播放失败，请稍后再试。')
     } finally {
       setPlayingSongId(null)
     }
   }
 
   async function handleRemove(songId: number) {
-    if (!userId || removingSongId !== null) return
+    if (removingSongId !== null) return
 
     setRemovingSongId(songId)
     setActionError('')
 
     try {
-      const { error } = await supabase
-        .from('liked_songs')
-        .delete()
-        .eq('user_id', userId)
-        .eq('song_id', songId)
+      const response = await fetch(`/api/likes/${songId}`, { method: 'DELETE' })
+      const data = (await response.json()) as MutationResponse
 
-      if (error) throw error
+      if (!response.ok) {
+        throw new Error(data.message || '移除失败，请稍后再试。')
+      }
 
       setLikedSongs(previous => previous.filter(song => song.song_id !== songId))
     } catch (error) {
-      setActionError(error instanceof Error ? `移除失败：${error.message}` : '移除失败，请稍后再试')
+      setActionError(error instanceof Error ? `移除失败：${error.message}` : '移除失败，请稍后再试。')
     } finally {
       setRemovingSongId(null)
     }
   }
 
   async function handleClearLikedSongs() {
-    if (!userId || likedSongs.length === 0 || isClearing) return
+    if (likedSongs.length === 0 || isClearing) return
 
     setIsClearing(true)
     setActionError('')
     setImportMessage('')
 
     try {
-      const { error } = await supabase
-        .from('liked_songs')
-        .delete()
-        .eq('user_id', userId)
+      const response = await fetch('/api/likes', { method: 'DELETE' })
+      const data = (await response.json()) as MutationResponse
 
-      if (error) throw error
+      if (!response.ok) {
+        throw new Error(data.message || '清空失败，请稍后再试。')
+      }
 
       setLikedSongs([])
       analysisAbortRef.current?.abort()
@@ -273,7 +279,7 @@ export default function LibraryPage() {
       setAnalysisError('')
       setImportMessage('已清空我喜欢的音乐。')
     } catch (error) {
-      setActionError(error instanceof Error ? `清空失败：${error.message}` : '清空失败，请稍后再试')
+      setActionError(error instanceof Error ? `清空失败：${error.message}` : '清空失败，请稍后再试。')
     } finally {
       setIsClearing(false)
     }

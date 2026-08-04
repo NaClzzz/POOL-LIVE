@@ -7,7 +7,7 @@ const items = [
   { label: '首页', href: '/' },
   { label: '搜索', href: '/search' },
   { label: '喜欢', href: '/library' },
-  { label: '一起听' },
+  { label: '一起听', href: '/rooms' },
   { label: '个人中心', href: '/profile' },
 ]
 

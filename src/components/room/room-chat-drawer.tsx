@@ -1,22 +1,43 @@
 'use client'
 
 import { CloseOutlined, SendOutlined } from '@ant-design/icons'
-import { Input } from 'antd'
+import { Alert, Input } from 'antd'
 import { useEffect, useState } from 'react'
 
-import type { RoomChatMessage } from '@/types/room'
+import type { RoomRealtimeChatMessage } from '@/types/room'
 
+// 用于房间聊天抽屉展示真实消息、当前用户样式和发送状态。
 type RoomChatDrawerProps = {
   open: boolean
-  messages: RoomChatMessage[]
+  messages: RoomRealtimeChatMessage[]
+  currentUserId?: string
+  error?: string | null
   onClose: () => void
-  onSend: (content: string) => void
+  onSend: (content: string) => Promise<boolean>
 }
 
-export function RoomChatDrawer({ open, messages, onClose, onSend }: RoomChatDrawerProps) {
+function formatMessageTime(createdAt: string) {
+  const date = new Date(createdAt)
+  if (Number.isNaN(date.getTime())) return ''
+
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+export function RoomChatDrawer({
+  open,
+  messages,
+  currentUserId,
+  error,
+  onClose,
+  onSend,
+}: RoomChatDrawerProps) {
   const [content, setContent] = useState('')
   const [shouldRender, setShouldRender] = useState(open)
   const [isVisible, setIsVisible] = useState(open)
+  const [isSending, setIsSending] = useState(false)
 
   useEffect(() => {
     let animationFrame: number | undefined
@@ -40,11 +61,18 @@ export function RoomChatDrawer({ open, messages, onClose, onSend }: RoomChatDraw
     }
   }, [open])
 
-  function handleSend() {
-    if (!content.trim()) return
+  async function handleSend() {
+    const nextContent = content.trim()
+    if (!nextContent || isSending) return
 
-    onSend(content)
-    setContent('')
+    setIsSending(true)
+
+    try {
+      const isSent = await onSend(nextContent)
+      if (isSent) setContent('')
+    } finally {
+      setIsSending(false)
+    }
   }
 
   if (!shouldRender) return null
@@ -85,41 +113,54 @@ export function RoomChatDrawer({ open, messages, onClose, onSend }: RoomChatDraw
         </header>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
-          {messages.map(message => (
-            <article key={message.id} className={message.isMine ? 'text-right' : ''}>
-              <div className={`mb-1 flex items-center gap-2 text-xs text-[#71808a] ${message.isMine ? 'justify-end' : ''}`}>
-                <span>{message.senderName}</span>
-                <span>{message.sentAt}</span>
-              </div>
-              <p
-                className={`m-0 inline-block max-w-[290px] rounded-[8px] px-3 py-2 text-left text-sm leading-6 ${
-                  message.isMine ? 'bg-[#eaf6ff] text-[#1e88e5]' : 'bg-[#f4f6f7] text-[#34454f]'
-                }`}
-              >
-                {message.content}
-              </p>
-            </article>
-          ))}
+          {messages.length === 0 ? (
+            <p className="m-0 text-center text-sm text-[#71808a]">还没有消息，说点什么吧。</p>
+          ) : null}
+          {messages.map(message => {
+            const isMine = message.senderId === currentUserId
+
+            return (
+              <article key={message.id} className={isMine ? 'text-right' : ''}>
+                <div
+                  className={`mb-1 flex items-center gap-2 text-xs text-[#71808a] ${
+                    isMine ? 'justify-end' : ''
+                  }`}
+                >
+                  <span>{message.senderName}</span>
+                  <span>{formatMessageTime(message.createdAt)}</span>
+                </div>
+                <p
+                  className={`m-0 inline-block max-w-[290px] rounded-[8px] px-3 py-2 text-left text-sm leading-6 ${
+                    isMine ? 'bg-[#eaf6ff] text-[#1e88e5]' : 'bg-[#f4f6f7] text-[#34454f]'
+                  }`}
+                >
+                  {message.content}
+                </p>
+              </article>
+            )
+          })}
         </div>
 
         <div className="shrink-0 border-t border-[#dfe4e7] p-4">
+          {error ? <Alert className="mb-3" type="error" showIcon message={error} /> : null}
           <Input
             value={content}
             maxLength={120}
+            disabled={isSending}
             placeholder="说点什么…"
             suffix={
               <button
                 type="button"
-                disabled={!content.trim()}
+                disabled={!content.trim() || isSending}
                 aria-label="发送消息"
-                onClick={handleSend}
+                onClick={() => void handleSend()}
                 className="text-[#1e88e5] disabled:cursor-not-allowed disabled:text-[#c3cbd0]"
               >
                 <SendOutlined />
               </button>
             }
             onChange={event => setContent(event.target.value)}
-            onPressEnter={handleSend}
+            onPressEnter={() => void handleSend()}
           />
         </div>
       </aside>

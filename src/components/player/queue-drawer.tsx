@@ -1,7 +1,7 @@
-import { DragOutlined } from '@ant-design/icons'
+import { HolderOutlined } from '@ant-design/icons'
 import { DragDropProvider } from '@dnd-kit/react'
 import { isSortable, useSortable } from '@dnd-kit/react/sortable'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { PlayerSong } from '@/types/player'
 
@@ -39,6 +39,7 @@ function SortableQueueItem({
   return (
     <div
       ref={ref}
+      data-current-song={isCurrentSong ? 'true' : undefined}
       className={`grid grid-cols-[1fr_32px_32px] items-center gap-2 border-b border-[#edf0f2] py-3 ${
         isCurrentSong ? 'bg-[#eaf6ff]' : ''
       } ${isDragging ? 'opacity-50' : ''}`}
@@ -81,7 +82,7 @@ function SortableQueueItem({
         onClick={event => event.stopPropagation()}
         className="grid h-8 w-8 place-items-center rounded-full text-[#9aa5ac] hover:bg-[#eaf6ff] hover:text-[#1e88e5]"
       >
-        <DragOutlined />
+        <HolderOutlined />
       </button>
       <button
         type="button"
@@ -110,6 +111,7 @@ export function QueueDrawer({
 }: QueueDrawerProps) {
   const [shouldRender, setShouldRender] = useState(open)
   const [isVisible, setIsVisible] = useState(open)
+  const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     let animationFrame: number | undefined
@@ -132,6 +134,26 @@ export function QueueDrawer({
       if (closeTimeout) window.clearTimeout(closeTimeout)
     }
   }, [open])
+
+  useEffect(() => {
+    if (!open || !isVisible || isLoading || currentIndex < 0) return
+
+    const frame = window.requestAnimationFrame(() => {
+      const list = listRef.current
+      const currentRow = list?.querySelector<HTMLElement>('[data-current-song="true"]')
+
+      if (!list || !currentRow) return
+
+      const listRect = list.getBoundingClientRect()
+      const rowRect = currentRow.getBoundingClientRect()
+      const nextScrollTop =
+        list.scrollTop + rowRect.top - listRect.top - list.clientHeight / 2 + rowRect.height / 2
+
+      list.scrollTop = Math.max(0, nextScrollTop)
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [currentIndex, isLoading, isVisible, open, queue])
 
   if (!shouldRender) return null
 
@@ -170,7 +192,7 @@ export function QueueDrawer({
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           {isLoading ? (
             <div className="space-y-3">
               {Array.from({ length: 5 }, (_, index) => (

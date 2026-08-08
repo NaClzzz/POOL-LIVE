@@ -3,7 +3,9 @@
 import {
   CaretRightFilled,
   CustomerServiceOutlined,
+  HeartFilled,
   HeartOutlined,
+  OrderedListOutlined,
   PauseOutlined,
   RetweetOutlined,
   StepBackwardOutlined,
@@ -15,6 +17,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { QueueDrawer } from '@/components/player/queue-drawer'
 import { RoomPlayerBar } from '@/components/room/room-player-bar'
+import { notifyLikedSongsChanged } from '@/lib/liked-songs/client-events'
 import { usePlayerStore } from '@/store/player-store'
 import type { LikedSong } from '@/types/liked-song'
 import type { PlayerSong } from '@/types/player'
@@ -28,6 +31,10 @@ type PlayUrlResponse = {
 
 type LikesResponse = {
   songs?: LikedSong[]
+  message?: string
+}
+
+type LikeMutationResponse = {
   message?: string
 }
 
@@ -52,10 +59,13 @@ export function PlayerBar() {
 function PersonalPlayerBar() {
   const audioRef = useRef<HTMLAudioElement>(null)
   const audioRequestIdRef = useRef(0)
+  const currentSongLikeRequestIdRef = useRef(0)
   const [isQueueHydrating, setIsQueueHydrating] = useState(true)
   const [isQueueOpen, setIsQueueOpen] = useState(false)
   const [isQueuePreparing, setIsQueuePreparing] = useState(false)
   const [isSwitchingPlaybackMode, setIsSwitchingPlaybackMode] = useState(false)
+  const [likedSongId, setLikedSongId] = useState<number | null>(null)
+  const [isTogglingCurrentSongLike, setIsTogglingCurrentSongLike] = useState(false)
   const currentSong = usePlayerStore(state => state.currentSong)
   const queue = usePlayerStore(state => state.queue)
   const currentIndex = usePlayerStore(state => state.currentIndex)
@@ -151,6 +161,47 @@ function PersonalPlayerBar() {
       audio?.pause()
     }
   }, [])
+
+  useEffect(() => {
+    const songId = currentSong?.id
+    const requestId = currentSongLikeRequestIdRef.current + 1
+    currentSongLikeRequestIdRef.current = requestId
+    let isCurrent = true
+
+    if (!songId) return
+
+    const currentSongId = songId
+
+    async function loadCurrentSongLikeState() {
+      try {
+        const response = await fetch('/api/likes')
+        const data = (await response.json()) as LikesResponse
+
+        if (!response.ok) {
+          throw new Error(data.message || '读取喜欢状态失败')
+        }
+
+        if (isCurrent && currentSongLikeRequestIdRef.current === requestId) {
+          setLikedSongId(
+            (data.songs ?? []).some(song => song.song_id === currentSongId)
+              ? currentSongId
+              : null,
+          )
+        }
+      } catch {
+        // The player stays usable if the visual like state cannot be refreshed.
+        if (isCurrent && currentSongLikeRequestIdRef.current === requestId) {
+          setLikedSongId(null)
+        }
+      }
+    }
+
+    void loadCurrentSongLikeState()
+
+    return () => {
+      isCurrent = false
+    }
+  }, [currentSong?.id])
 
   async function loadAudioForSong(song: PlayerSong, shouldPlay: boolean) {
     const requestId = audioRequestIdRef.current + 1
@@ -264,6 +315,56 @@ function PersonalPlayerBar() {
     setIsQueuePreparing(false)
   }
 
+  async function handleToggleCurrentSongLike() {
+    if (!currentSong || isTogglingCurrentSongLike) return
+
+    const songId = currentSong.id
+    const nextLikedState = !isCurrentSongLiked
+    currentSongLikeRequestIdRef.current += 1
+    setIsTogglingCurrentSongLike(true)
+
+    try {
+      const response = nextLikedState
+        ? await fetch('/api/likes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              song_id: songId,
+              name: currentSong.name,
+              artists: currentSong.artists,
+              album_name: currentSong.albumName,
+              cover_url: currentSong.coverUrl ?? null,
+              duration_ms: currentSong.duration,
+            }),
+          })
+        : await fetch(`/api/likes/${songId}`, { method: 'DELETE' })
+      const data = (await response.json()) as LikeMutationResponse
+
+      if (!response.ok) {
+        throw new Error(data.message || (nextLikedState ? '收藏歌曲失败' : '取消收藏失败'))
+      }
+
+      if (usePlayerStore.getState().currentSong?.id === songId) {
+        setLikedSongId(nextLikedState ? songId : null)
+      }
+      notifyLikedSongsChanged({
+        isLiked: nextLikedState,
+        song: {
+          song_id: songId,
+          name: currentSong.name,
+          artists: currentSong.artists,
+          album_name: currentSong.albumName,
+          cover_url: currentSong.coverUrl ?? null,
+          duration_ms: currentSong.duration,
+        },
+      })
+    } catch (error) {
+      setPlaybackError(error instanceof Error ? error.message : '更新喜欢状态失败，请稍后再试')
+    } finally {
+      setIsTogglingCurrentSongLike(false)
+    }
+  }
+
   async function handlePlaybackModeSwitch() {
     if (isSwitchingPlaybackMode || queue.length === 0) return
 
@@ -307,13 +408,16 @@ function PersonalPlayerBar() {
   function handleMoveQueueSong(fromIndex: number, toIndex: number) {
     const movedCurrentSong = moveQueueSong(fromIndex, toIndex)
 
-    if (movedCurrentSong) void loadAudioForSong(movedCurrentSong, true)
+    // Reordering the active song restarts it from 0, but must not turn a
+    // paused player into a playing one.
+    if (movedCurrentSong) void loadAudioForSong(movedCurrentSong, isPlaying)
   }
 
   const totalDuration = duration || (currentSong ? currentSong.duration / 1000 : 0)
   const canPlayPrevious = currentIndex >= 0 && queue.length > 0
   const canPlayNext = queue.length > 0
   const isQueueLoading = isQueueHydrating || isQueuePreparing
+  const isCurrentSongLiked = currentSong?.id === likedSongId
 
   return (
     <>
@@ -372,21 +476,38 @@ function PersonalPlayerBar() {
             {playbackError ?? (currentSong ? currentSong.artists : '选择一首歌开始聆听')}
           </Typography.Text>
         </div>
-        <Tooltip title="收藏功能请在歌曲列表中使用爱心按钮">
-          <Button className="shrink-0" type="text" shape="circle" disabled icon={<HeartOutlined />} />
+        <Tooltip title={isCurrentSongLiked ? '取消喜欢' : '喜欢这首歌'}>
+          <Button
+            className="shrink-0"
+            type="text"
+            shape="circle"
+            loading={isTogglingCurrentSongLike}
+            disabled={!currentSong || isTogglingCurrentSongLike}
+            onClick={() => void handleToggleCurrentSongLike()}
+            aria-label={isCurrentSongLiked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'}
+            icon={
+              isCurrentSongLiked ? <HeartFilled className="!text-[#42a5f5]" /> : <HeartOutlined />
+            }
+          />
         </Tooltip>
       </div>
 
       <div className="absolute left-1/2 top-1/2 hidden w-[min(560px,46vw)] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 md:flex">
         <div className="flex items-center gap-1">
-          <Tooltip title={playbackMode === 'sequential' ? '顺序播放：点击切换为随机排序' : '随机排序：点击切换为顺序播放'}>
+          <Tooltip title={playbackMode === 'sequential' ? '当前：顺序播放（点击切换为随机排序）' : '当前：随机排序（点击切换为顺序播放）'}>
             <Button
               type="text"
               shape="circle"
               loading={isSwitchingPlaybackMode}
               disabled={queue.length === 0 || isLoadingAudio}
               onClick={() => void handlePlaybackModeSwitch()}
-              icon={<RetweetOutlined className={playbackMode === 'shuffle' ? 'text-[#1e88e5]' : undefined} />}
+              aria-label={playbackMode === 'sequential' ? '当前为顺序播放，切换为随机排序' : '当前为随机排序，切换为顺序播放'}
+              className={
+                playbackMode === 'shuffle'
+                  ? '!bg-[#eaf6ff] !text-[#1e88e5]'
+                  : '!text-[#52616a]'
+              }
+              icon={playbackMode === 'shuffle' ? <RetweetOutlined /> : <OrderedListOutlined />}
             />
           </Tooltip>
           <Tooltip title="上一首">
@@ -402,6 +523,7 @@ function PersonalPlayerBar() {
             type="primary"
             shape="circle"
             size="large"
+            className="!grid !h-12 !w-12 !min-w-12 !place-items-center !rounded-full !p-0"
             loading={isLoadingAudio}
             disabled={!currentSong}
             onClick={handleTogglePlayback}

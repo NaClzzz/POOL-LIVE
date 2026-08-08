@@ -3,17 +3,55 @@
 import { EnterOutlined, PlusOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Form, Input, Typography } from 'antd'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { PageHeading } from '@/components/layout/page-heading'
 import { RoomCreateModal } from '@/components/room/room-create-modal'
 import type { CreateRoomFormValues } from '@/components/room/room-create-modal'
 import { RoomRecommendationCard } from '@/components/room/room-recommendation-card'
-import { recommendedRooms, saveRoomDraft } from '@/lib/room/demo-data'
-import type { RoomDraft } from '@/types/room'
+import type { RoomListItem } from '@/types/room'
 
-function createRoomCode() {
-  return `pool-${Math.random().toString(36).slice(2, 8)}`
+type RoomsApiResponse = {
+  rooms: RoomListItem[]
+}
+
+type CreateRoomApiResponse = {
+  room: RoomListItem
+}
+
+function getResponseMessage(body: unknown, fallback: string) {
+  if (body && typeof body === 'object' && 'message' in body && typeof body.message === 'string') {
+    return body.message
+  }
+
+  return fallback
+}
+
+async function readResponseBody(response: Response) {
+  return response.json().catch(() => null) as Promise<unknown>
+}
+
+async function fetchPublicRooms() {
+  const response = await fetch('/api/rooms', { cache: 'no-store' })
+  const body = await readResponseBody(response)
+
+  if (!response.ok) {
+    throw new Error(getResponseMessage(body, '读取公开房间失败，请稍后重试。'))
+  }
+
+  const data = body as RoomsApiResponse
+  return Array.isArray(data.rooms) ? data.rooms : []
+}
+
+function saveJoinPassword(roomCode: string, password: string) {
+  const key = `pool-room-password:${roomCode.toLowerCase()}`
+
+  if (password) {
+    sessionStorage.setItem(key, password)
+    return
+  }
+
+  sessionStorage.removeItem(key)
 }
 
 export default function RoomsLobbyPage() {
@@ -21,8 +59,52 @@ export default function RoomsLobbyPage() {
   const [form] = Form.useForm<CreateRoomFormValues>()
   const [roomCode, setRoomCode] = useState('')
   const [password, setPassword] = useState('')
+  const [rooms, setRooms] = useState<RoomListItem[]>([])
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [joinError, setJoinError] = useState('')
+  const [roomListError, setRoomListError] = useState('')
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [isLoadingRooms, setIsLoadingRooms] = useState(true)
+  const [isCreatingRoom, setIsCreatingRoom] = useState(false)
+
+  async function retryLoadRooms() {
+    setIsLoadingRooms(true)
+    setRoomListError('')
+
+    try {
+      setRooms(await fetchPublicRooms())
+      setRoomListError('')
+    } catch (error) {
+      setRoomListError(error instanceof Error ? error.message : '读取公开房间失败，请稍后重试。')
+    } finally {
+      setIsLoadingRooms(false)
+    }
+  }
+
+  useEffect(() => {
+    let isCurrent = true
+
+    async function loadInitialRooms() {
+      try {
+        const nextRooms = await fetchPublicRooms()
+        if (!isCurrent) return
+
+        setRooms(nextRooms)
+      } catch (error) {
+        if (!isCurrent) return
+
+        setRoomListError(error instanceof Error ? error.message : '读取公开房间失败，请稍后重试。')
+      } finally {
+        if (isCurrent) setIsLoadingRooms(false)
+      }
+    }
+
+    void loadInitialRooms()
+
+    return () => {
+      isCurrent = false
+    }
+  }, [])
 
   function enterRoom(code: string) {
     const normalizedCode = code.trim()
@@ -33,27 +115,51 @@ export default function RoomsLobbyPage() {
     }
 
     setJoinError('')
+    saveJoinPassword(normalizedCode, password)
     router.push(`/rooms/${encodeURIComponent(normalizedCode)}`)
   }
 
-  function handleCreateRoom(values: CreateRoomFormValues) {
-    const draft: RoomDraft = {
-      code: createRoomCode(),
-      name: values.name.trim(),
-      tag: values.tag.trim(),
-      isPasswordProtected: values.isPasswordProtected,
-      maxMembers: values.maxMembers,
-      maxStageMembers: values.maxStageMembers,
-    }
+  async function handleCreateRoom(values: CreateRoomFormValues) {
+    setCreateError(null)
+    setIsCreatingRoom(true)
 
-    saveRoomDraft(draft)
-    setIsCreateModalOpen(false)
-    form.resetFields()
-    router.push(`/rooms/${draft.code}`)
+    try {
+      const response = await fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: values.name,
+          tag: values.tag,
+          password: values.isPasswordProtected ? values.password : null,
+          maxMembers: values.maxMembers,
+          maxStageMembers: values.maxStageMembers,
+        }),
+      })
+      const body = await readResponseBody(response)
+
+      if (!response.ok) {
+        throw new Error(getResponseMessage(body, '创建房间失败，请稍后重试。'))
+      }
+
+      const data = body as CreateRoomApiResponse
+      if (!data.room?.code) {
+        throw new Error('创建房间失败，请稍后重试。')
+      }
+
+      saveJoinPassword(data.room.code, values.isPasswordProtected ? values.password ?? '' : '')
+      setIsCreateModalOpen(false)
+      form.resetFields()
+      router.push(`/rooms/${encodeURIComponent(data.room.code)}`)
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : '创建房间失败，请稍后重试。')
+    } finally {
+      setIsCreatingRoom(false)
+    }
   }
 
   function closeCreateModal() {
     setIsCreateModalOpen(false)
+    setCreateError(null)
     form.resetFields()
   }
 
@@ -62,7 +168,7 @@ export default function RoomsLobbyPage() {
       <PageHeading
         eyebrow="POOL LIVE"
         title="一起听"
-        description="创建一个听歌房，按上台顺序轮流播放彼此的歌单。当前版本为房间前端原型。"
+        description="创建一个听歌房，按上台顺序轮流播放彼此的歌单。当前版本已接入真实房间创建与大厅列表。"
       />
 
       <Card className="mb-6" styles={{ body: { padding: 28 } }}>
@@ -80,7 +186,7 @@ export default function RoomsLobbyPage() {
               />
               <Input.Password
                 size="large"
-                placeholder="房间密码（演示阶段不校验）"
+                placeholder="密码房请输入房间密码"
                 value={password}
                 onChange={event => setPassword(event.target.value)}
                 onPressEnter={() => enterRoom(roomCode)}
@@ -101,7 +207,7 @@ export default function RoomsLobbyPage() {
           </Button>
         </div>
         <Typography.Text type="secondary" className="mt-3 block">
-          加密房间会显示锁图标。正式接入后将由服务端验证密码和房间资格。
+          房间密码只会暂存在当前浏览器会话中，后续由房间 Socket 服务端校验，不会写入链接。
         </Typography.Text>
       </Card>
 
@@ -110,16 +216,36 @@ export default function RoomsLobbyPage() {
       <section>
         <div className="mb-4 flex items-end justify-between">
           <div>
-            <p className="m-0 text-xs font-semibold tracking-[0.16em] text-[#1e88e5]">RECOMMENDED ROOMS</p>
+            <p className="m-0 text-xs font-semibold tracking-[0.16em] text-[#1e88e5]">PUBLIC ROOMS</p>
             <h2 className="m-0 mt-1 text-2xl font-semibold tracking-[-0.03em] text-[#222a30]">推荐房间</h2>
           </div>
-          <Typography.Text type="secondary">均为本地模拟房间</Typography.Text>
+          <Typography.Text type="secondary">来自真实公开房间</Typography.Text>
         </div>
-        <div className="grid grid-cols-3 gap-5">
-          {recommendedRooms.map(room => (
-            <RoomRecommendationCard key={room.room.code} room={room} onJoin={enterRoom} />
-          ))}
-        </div>
+        {roomListError ? (
+          <Alert
+            type="error"
+            showIcon
+            message={roomListError}
+            action={
+              <Button size="small" onClick={retryLoadRooms}>
+                重试
+              </Button>
+            }
+          />
+        ) : null}
+        {isLoadingRooms ? <Typography.Text type="secondary">正在加载公开房间…</Typography.Text> : null}
+        {!isLoadingRooms && !roomListError && rooms.length === 0 ? (
+          <Card styles={{ body: { padding: 24 } }}>
+            <Typography.Text type="secondary">暂时没有可加入的公开房间，创建第一个吧。</Typography.Text>
+          </Card>
+        ) : null}
+        {rooms.length > 0 ? (
+          <div className="grid grid-cols-3 gap-5">
+            {rooms.map(room => (
+              <RoomRecommendationCard key={room.code} room={room} onJoin={enterRoom} />
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <RoomCreateModal
@@ -127,6 +253,8 @@ export default function RoomsLobbyPage() {
         open={isCreateModalOpen}
         onClose={closeCreateModal}
         onCreate={handleCreateRoom}
+        confirmLoading={isCreatingRoom}
+        error={createError}
       />
     </main>
   )

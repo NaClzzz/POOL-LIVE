@@ -12,6 +12,10 @@ import { Alert, Avatar, Button, Card, Input, List, Popconfirm, Space, Spin, Typo
 import { useEffect, useRef, useState } from 'react'
 
 import { PageHeading } from '@/components/layout/page-heading'
+import {
+  LIKED_SONGS_CHANGED_EVENT,
+  type LikedSongsChangedDetail,
+} from '@/lib/liked-songs/client-events'
 import { usePlayerStore } from '@/store/player-store'
 import type { LikedSong, LikedSongInput } from '@/types/liked-song'
 
@@ -138,6 +142,35 @@ export default function LibraryPage() {
   useEffect(() => {
     return () => {
       analysisAbortRef.current?.abort()
+    }
+  }, [])
+
+  useEffect(() => {
+    function handleLikedSongsChanged(event: Event) {
+      const detail = (event as CustomEvent<LikedSongsChangedDetail>).detail
+      if (!detail?.song) return
+
+      setLikedSongs(previous => {
+        if (!detail.isLiked) {
+          return previous.filter(song => song.song_id !== detail.song.song_id)
+        }
+
+        if (previous.some(song => song.song_id === detail.song.song_id)) return previous
+
+        return [
+          {
+            ...detail.song,
+            created_at: new Date().toISOString(),
+          },
+          ...previous,
+        ]
+      })
+    }
+
+    window.addEventListener(LIKED_SONGS_CHANGED_EVENT, handleLikedSongsChanged)
+
+    return () => {
+      window.removeEventListener(LIKED_SONGS_CHANGED_EVENT, handleLikedSongsChanged)
     }
   }, [])
 

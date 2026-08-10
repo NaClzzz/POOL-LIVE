@@ -5,8 +5,10 @@ import { config } from 'dotenv'
 import { Server, type Socket } from 'socket.io'
 
 import type {
+  RoomDissolveAcknowledgement,
   RoomPlaybackState,
   RoomRealtimeChatMessage,
+  RoomSettingsAcknowledgement,
   RoomSocketSnapshot,
   RoomSwitchRequired,
   UserRoomPlaylistItem,
@@ -132,6 +134,7 @@ async function startSocketServer() {
       RoomPlaylistError,
       RoomPlaybackError,
       RoomPresenceService,
+      RoomSettingsError,
       RoomStageError,
       normalizeRoomCode,
     },
@@ -415,6 +418,72 @@ async function startSocketServer() {
             console.error(`[Socket] 用户 ${user.id} 操作下台失败。`, error)
           }
 
+          acknowledge?.({ ok: false, message })
+        }
+      },
+    )
+
+    socket.on(
+      'room:update-settings',
+      async (
+        payload: unknown,
+        acknowledge?: (result: RoomSettingsAcknowledgement) => void,
+      ) => {
+        const roomCode = socket.data.roomCode
+        if (typeof roomCode !== 'string') {
+          acknowledge?.({ ok: false, message: '请先加入房间后再修改设置。' })
+          return
+        }
+
+        try {
+          const snapshot = await roomPresence.updateRoomSettings({
+            roomCode,
+            userId: user.id,
+            socketId: socket.id,
+            payload,
+          })
+
+          acknowledge?.({ ok: true, snapshot })
+          io.to(`room:${roomCode}`).emit('room:presence', snapshot)
+        } catch (error) {
+          const message = error instanceof RoomSettingsError ? error.message : '保存房间设置失败，请稍后重试。'
+          if (!(error instanceof RoomSettingsError)) {
+            console.error(`[Socket] 用户 ${user.id} 修改房间设置失败。`, error)
+          }
+          acknowledge?.({ ok: false, message })
+        }
+      },
+    )
+
+    socket.on(
+      'room:dissolve',
+      async (acknowledge?: (result: RoomDissolveAcknowledgement) => void) => {
+        const roomCode = socket.data.roomCode
+        if (typeof roomCode !== 'string') {
+          acknowledge?.({ ok: false, message: '请先加入房间后再解散房间。' })
+          return
+        }
+
+        try {
+          const roomSockets = await io.in(`room:${roomCode}`).fetchSockets()
+          await roomPresence.dissolveRoom({
+            roomCode,
+            userId: user.id,
+            socketId: socket.id,
+          })
+
+          acknowledge?.({ ok: true })
+          io.to(`room:${roomCode}`).emit('room:dissolved', { roomCode })
+
+          for (const roomSocket of roomSockets) {
+            await roomSocket.leave(`room:${roomCode}`)
+            delete roomSocket.data.roomCode
+          }
+        } catch (error) {
+          const message = error instanceof RoomSettingsError ? error.message : '解散房间失败，请稍后重试。'
+          if (!(error instanceof RoomSettingsError)) {
+            console.error(`[Socket] 用户 ${user.id} 解散房间失败。`, error)
+          }
           acknowledge?.({ ok: false, message })
         }
       },

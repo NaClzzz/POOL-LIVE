@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import { RoomChatDrawer } from '@/components/room/room-chat-drawer'
 import { RoomQueueDrawer } from '@/components/room/room-queue-drawer'
 import { useSession } from '@/lib/auth-client'
+import { getRoomPlaybackPositionMs } from '@/lib/room/playback'
 import { getSocket } from '@/lib/socket-client'
 import { usePlayerStore } from '@/store/player-store'
 import { useRoomRealtimeStore } from '@/store/room-realtime-store'
@@ -65,15 +66,6 @@ function formatTime(time: number) {
   return `${String(minutes).padStart(2, '0')}:${seconds}`
 }
 
-function getPlaybackPosition(playback: RoomPlaybackState | null) {
-  if (!playback || playback.status !== 'playing' || !playback.startedAt) return 0
-  const startedAt = new Date(playback.startedAt).getTime()
-  if (Number.isNaN(startedAt)) return 0
-
-  const elapsedMs = Math.max(0, Date.now() - startedAt)
-  return Math.min(playback.durationMs / 1000, (playback.startOffsetMs + elapsedMs) / 1000)
-}
-
 export function RoomPlayerBar() {
   const params = useParams<{ roomCode: string }>()
   const currentPathRoomCode = typeof params.roomCode === 'string' ? params.roomCode.toLowerCase() : null
@@ -118,8 +110,8 @@ export function RoomPlayerBar() {
   useEffect(() => {
     if (!canUseRoom) return
 
-    const initialFrame = requestAnimationFrame(() => setDisplayPosition(getPlaybackPosition(playback)))
-    const timer = window.setInterval(() => setDisplayPosition(getPlaybackPosition(playback)), 250)
+    const initialFrame = requestAnimationFrame(() => setDisplayPosition(getRoomPlaybackPositionMs(playback) / 1000))
+    const timer = window.setInterval(() => setDisplayPosition(getRoomPlaybackPositionMs(playback) / 1000), 250)
     return () => {
       cancelAnimationFrame(initialFrame)
       window.clearInterval(timer)
@@ -190,7 +182,7 @@ export function RoomPlayerBar() {
     if (!audio || !audioSource || !playback || playback.status !== 'playing') return
     if (audioSource.version !== playback.version) return
 
-    const targetPosition = getPlaybackPosition(playback)
+    const targetPosition = getRoomPlaybackPositionMs(playback) / 1000
     if (Math.abs(audio.currentTime - targetPosition) > 1) audio.currentTime = targetPosition
 
     void audio.play().then(

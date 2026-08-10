@@ -68,15 +68,21 @@ export function parseCreateRoomInput(value: unknown): CreateRoomInput {
     throw new RoomValidationError('请求数据格式不正确。')
   }
 
-  const input = value as Record<string, unknown>
+  const request = value as Record<string, unknown>
 
-  return {
-    name: getRequiredText(input.name, '房间名称', ROOM_NAME_MIN_LENGTH, ROOM_NAME_MAX_LENGTH),
-    tag: getRequiredText(input.tag, '房间标签', ROOM_TAG_MIN_LENGTH, ROOM_TAG_MAX_LENGTH),
-    password: getOptionalPassword(input.password),
-    maxMembers: getIntegerInRange(input.maxMembers, '最大人数', 2, 50),
-    maxStageMembers: getIntegerInRange(input.maxStageMembers, '最大上台人数', 1, 30),
+  const input = {
+    name: getRequiredText(request.name, '房间名称', ROOM_NAME_MIN_LENGTH, ROOM_NAME_MAX_LENGTH),
+    tag: getRequiredText(request.tag, '房间标签', ROOM_TAG_MIN_LENGTH, ROOM_TAG_MAX_LENGTH),
+    password: getOptionalPassword(request.password),
+    maxMembers: getIntegerInRange(request.maxMembers, '最大人数', 2, 50),
+    maxStageMembers: getIntegerInRange(request.maxStageMembers, '最大上台人数', 1, 30),
   }
+
+  if (input.maxStageMembers > input.maxMembers) {
+    throw new RoomValidationError('最大上台人数不能超过最大人数。')
+  }
+
+  return input
 }
 
 export function createRoomId() {

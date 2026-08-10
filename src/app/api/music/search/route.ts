@@ -3,6 +3,79 @@ import { type NextRequest, NextResponse } from 'next/server'
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 50
 
+// 用于保留搜索接口单首歌曲原始字段，并补充专辑封面地址。
+type MusicSearchSong = {
+  id: number
+  album?: {
+    picUrl?: string
+    [key: string]: unknown
+  }
+  [key: string]: unknown
+}
+
+// 用于读取搜索接口结果中的歌曲列表，同时保留上游的其他响应字段。
+type MusicSearchResponse = {
+  result?: {
+    songs?: MusicSearchSong[]
+    [key: string]: unknown
+  }
+  [key: string]: unknown
+}
+
+// 用于读取歌曲详情接口返回的歌曲 ID 与标准专辑封面地址。
+type SongDetailResponse = {
+  songs?: Array<{
+    id: number
+    al?: {
+      picUrl?: string
+    }
+  }>
+}
+
+async function enrichSearchCoverUrls(data: MusicSearchResponse, musicApiBaseUrl: string) {
+  const songs = data.result?.songs
+  const songIds = songs?.map(song => song.id).filter(Number.isSafeInteger) ?? []
+
+  if (songIds.length === 0) return data
+
+  try {
+    const detailUrl = new URL('/song/detail', musicApiBaseUrl)
+    detailUrl.searchParams.set('ids', songIds.join(','))
+    const detailResponse = await fetch(detailUrl, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(10_000),
+    })
+
+    if (!detailResponse.ok) return data
+
+    const detailData = (await detailResponse.json()) as SongDetailResponse
+    const coverUrls = new Map(
+      (detailData.songs ?? [])
+        .filter(song => typeof song.al?.picUrl === 'string' && song.al.picUrl.length > 0)
+        .map(song => [song.id, song.al!.picUrl]),
+    )
+
+    if (coverUrls.size === 0 || !data.result?.songs) return data
+
+    return {
+      ...data,
+      result: {
+        ...data.result,
+        songs: data.result.songs.map(song => ({
+          ...song,
+          album: {
+            ...song.album,
+            picUrl: song.album?.picUrl ?? coverUrls.get(song.id),
+          },
+        })),
+      },
+    }
+  } catch {
+    // 封面补全失败不影响搜索主流程，前端会回退为歌曲首字。
+    return data
+  }
+}
+
 export async function GET(request: NextRequest) {
   const keywords = request.nextUrl.searchParams.get('keywords')?.trim()
 
@@ -43,7 +116,7 @@ export async function GET(request: NextRequest) {
       signal: AbortSignal.timeout(10_000),
     })
 
-    const data = await response.json()
+    const data = (await response.json()) as MusicSearchResponse
 
     if (!response.ok) {
       return NextResponse.json(
@@ -52,7 +125,7 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    return NextResponse.json(data)
+    return NextResponse.json(await enrichSearchCoverUrls(data, musicApiBaseUrl))
   } catch {
     return NextResponse.json(
       { message: '无法连接本地音乐 API，请确认 3002 服务正在运行' },

@@ -53,7 +53,7 @@ export function RoomCreateModal({
           tag: '',
           isPasswordProtected: false,
           maxMembers: 8,
-          maxStageMembers: 10,
+          maxStageMembers: 8,
         }}
         onFinish={onCreate}
       >
@@ -103,7 +103,18 @@ export function RoomCreateModal({
           <Form.Item
             label="最大上台人数"
             name="maxStageMembers"
-            rules={[{ required: true, message: '请设置最大上台人数。' }]}
+            dependencies={['maxMembers']}
+            rules={[
+              { required: true, message: '请设置最大上台人数。' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (typeof value === 'number' && value > getFieldValue('maxMembers')) {
+                    return Promise.reject(new Error('最大上台人数不能超过最大人数。'))
+                  }
+                  return Promise.resolve()
+                },
+              }),
+            ]}
           >
             <InputNumber className="!w-full" min={1} max={30} precision={0} />
           </Form.Item>

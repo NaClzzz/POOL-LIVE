@@ -13,22 +13,25 @@ import type { RoomListItem } from '@/types/room'
 
 type RoomsApiResponse = {
   rooms: RoomListItem[]
+  myRoom: RoomListItem | null
 }
 
 type CreateRoomApiResponse = {
   room: RoomListItem
 }
 
+// 读响应体
+async function readResponseBody(response: Response) {
+  return response.json().catch(() => null) as Promise<unknown>
+}
+
+// 读message
 function getResponseMessage(body: unknown, fallback: string) {
   if (body && typeof body === 'object' && 'message' in body && typeof body.message === 'string') {
     return body.message
   }
 
   return fallback
-}
-
-async function readResponseBody(response: Response) {
-  return response.json().catch(() => null) as Promise<unknown>
 }
 
 async function fetchPublicRooms() {
@@ -40,7 +43,10 @@ async function fetchPublicRooms() {
   }
 
   const data = body as RoomsApiResponse
-  return Array.isArray(data.rooms) ? data.rooms : []
+  return {
+    rooms: Array.isArray(data.rooms) ? data.rooms : [],
+    myRoom: data.myRoom?.code ? data.myRoom : null,
+  }
 }
 
 function saveJoinPassword(roomCode: string, password: string) {
@@ -60,6 +66,7 @@ export default function RoomsLobbyPage() {
   const [roomCode, setRoomCode] = useState('')
   const [password, setPassword] = useState('')
   const [rooms, setRooms] = useState<RoomListItem[]>([])
+  const [myRoom, setMyRoom] = useState<RoomListItem | null>(null)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [joinError, setJoinError] = useState('')
   const [roomListError, setRoomListError] = useState('')
@@ -72,7 +79,9 @@ export default function RoomsLobbyPage() {
     setRoomListError('')
 
     try {
-      setRooms(await fetchPublicRooms())
+      const result = await fetchPublicRooms()
+      setRooms(result.rooms)
+      setMyRoom(result.myRoom)
       setRoomListError('')
     } catch (error) {
       setRoomListError(error instanceof Error ? error.message : '读取公开房间失败，请稍后重试。')
@@ -86,10 +95,11 @@ export default function RoomsLobbyPage() {
 
     async function loadInitialRooms() {
       try {
-        const nextRooms = await fetchPublicRooms()
+        const result = await fetchPublicRooms()
         if (!isCurrent) return
 
-        setRooms(nextRooms)
+        setRooms(result.rooms)
+        setMyRoom(result.myRoom)
       } catch (error) {
         if (!isCurrent) return
 
@@ -138,6 +148,14 @@ export default function RoomsLobbyPage() {
       const body = await readResponseBody(response)
 
       if (!response.ok) {
+        const existingRoom = body as Partial<CreateRoomApiResponse>
+        if (response.status === 409 && existingRoom.room?.code) {
+          setMyRoom(existingRoom.room)
+          setIsCreateModalOpen(false)
+          form.resetFields()
+          return
+        }
+
         throw new Error(getResponseMessage(body, '创建房间失败，请稍后重试。'))
       }
 
@@ -146,7 +164,8 @@ export default function RoomsLobbyPage() {
         throw new Error('创建房间失败，请稍后重试。')
       }
 
-      saveJoinPassword(data.room.code, values.isPasswordProtected ? values.password ?? '' : '')
+      saveJoinPassword(data.room.code, values.isPasswordProtected ? (values.password ?? '') : '')
+      setMyRoom(data.room)
       setIsCreateModalOpen(false)
       form.resetFields()
       router.push(`/rooms/${encodeURIComponent(data.room.code)}`)
@@ -202,8 +221,19 @@ export default function RoomsLobbyPage() {
           >
             加入
           </Button>
-          <Button size="large" icon={<PlusOutlined />} onClick={() => setIsCreateModalOpen(true)}>
-            创建房间
+          <Button
+            size="large"
+            icon={myRoom ? <EnterOutlined /> : <PlusOutlined />}
+            onClick={() => {
+              if (myRoom) {
+                enterRoom(myRoom.code)
+                return
+              }
+
+              setIsCreateModalOpen(true)
+            }}
+          >
+            {myRoom ? '我的房间' : '创建房间'}
           </Button>
         </div>
         <Typography.Text type="secondary" className="mt-3 block">
@@ -216,8 +246,12 @@ export default function RoomsLobbyPage() {
       <section>
         <div className="mb-4 flex items-end justify-between">
           <div>
-            <p className="m-0 text-xs font-semibold tracking-[0.16em] text-[#1e88e5]">PUBLIC ROOMS</p>
-            <h2 className="m-0 mt-1 text-2xl font-semibold tracking-[-0.03em] text-[#222a30]">推荐房间</h2>
+            <p className="m-0 text-xs font-semibold tracking-[0.16em] text-[#1e88e5]">
+              PUBLIC ROOMS
+            </p>
+            <h2 className="m-0 mt-1 text-2xl font-semibold tracking-[-0.03em] text-[#222a30]">
+              推荐房间
+            </h2>
           </div>
           <Typography.Text type="secondary">来自真实公开房间</Typography.Text>
         </div>
@@ -233,10 +267,14 @@ export default function RoomsLobbyPage() {
             }
           />
         ) : null}
-        {isLoadingRooms ? <Typography.Text type="secondary">正在加载公开房间…</Typography.Text> : null}
+        {isLoadingRooms ? (
+          <Typography.Text type="secondary">正在加载公开房间…</Typography.Text>
+        ) : null}
         {!isLoadingRooms && !roomListError && rooms.length === 0 ? (
           <Card styles={{ body: { padding: 24 } }}>
-            <Typography.Text type="secondary">暂时没有可加入的公开房间，创建第一个吧。</Typography.Text>
+            <Typography.Text type="secondary">
+              暂时没有可加入的公开房间，创建第一个吧。
+            </Typography.Text>
           </Card>
         ) : null}
         {rooms.length > 0 ? (

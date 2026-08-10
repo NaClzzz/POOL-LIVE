@@ -251,8 +251,19 @@ export function RoomQueueDrawer({
 
                 return (
                   <div key={song.id} className="flex items-center gap-3 border-b border-[#edf0f2] px-2 py-3">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center bg-[#eaf6ff] text-sm font-semibold text-[#1e88e5]">
-                      {song.name.slice(0, 1)}
+                    <span
+                      className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden bg-[#eaf6ff] text-sm font-semibold text-[#1e88e5]"
+                      style={
+                        song.coverUrl
+                          ? {
+                              backgroundImage: `url(${song.coverUrl})`,
+                              backgroundPosition: 'center',
+                              backgroundSize: 'cover',
+                            }
+                          : undefined
+                      }
+                    >
+                      {song.coverUrl ? null : song.name.slice(0, 1)}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-[#222a30]">{song.name}</span>

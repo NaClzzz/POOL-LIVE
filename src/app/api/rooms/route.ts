@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, or } from 'drizzle-orm'
+import { and, desc, eq, gt, isNull, or, sql } from 'drizzle-orm'
 
 import { user } from '@/db/schema/legacy'
 import { rooms } from '@/db/schema/rooms'
@@ -22,6 +22,7 @@ function toRoomListItem(room: {
   code: string
   name: string
   tag: string
+  passwordHash: string | null
   maxMembers: number
   maxStageMembers: number
   currentMemberCount: number
@@ -32,7 +33,7 @@ function toRoomListItem(room: {
     code: room.code,
     name: room.name,
     tag: room.tag,
-    isPasswordProtected: false,
+    isPasswordProtected: Boolean(room.passwordHash),
     maxMembers: room.maxMembers,
     maxStageMembers: room.maxStageMembers,
     memberCount: room.currentMemberCount,
@@ -44,30 +45,44 @@ function toRoomListItem(room: {
 export async function GET() {
   try {
     const now = new Date()
-    const result = await db
-      .select({
-        code: rooms.code,
-        name: rooms.name,
-        tag: rooms.tag,
-        maxMembers: rooms.maxMembers,
-        maxStageMembers: rooms.maxStageMembers,
-        currentMemberCount: rooms.currentMemberCount,
-        ownerName: user.name,
-        lastActiveAt: rooms.lastActiveAt,
-      })
-      .from(rooms)
-      .innerJoin(user, eq(rooms.ownerId, user.id))
-      .where(
-        and(
-          isNull(rooms.passwordHash),
-          or(gt(rooms.currentMemberCount, 0), gt(rooms.emptyExpiresAt, now)),
-        ),
-      )
-      .orderBy(desc(rooms.lastActiveAt))
-      .limit(ROOM_LIST_LIMIT)
+    const session = await getCurrentSession()
+    const roomFields = {
+      code: rooms.code,
+      name: rooms.name,
+      tag: rooms.tag,
+      passwordHash: rooms.passwordHash,
+      maxMembers: rooms.maxMembers,
+      maxStageMembers: rooms.maxStageMembers,
+      currentMemberCount: rooms.currentMemberCount,
+      ownerName: user.name,
+      lastActiveAt: rooms.lastActiveAt,
+    }
+    const activeRoomCondition = or(
+      gt(rooms.currentMemberCount, 0),
+      gt(rooms.emptyExpiresAt, now),
+    )
+
+    const [result, myRoom] = await Promise.all([
+      db
+        .select(roomFields)
+        .from(rooms)
+        .innerJoin(user, eq(rooms.ownerId, user.id))
+        .where(and(isNull(rooms.passwordHash), activeRoomCondition))
+        .orderBy(desc(rooms.lastActiveAt))
+        .limit(ROOM_LIST_LIMIT),
+      session
+        ? db
+            .select(roomFields)
+            .from(rooms)
+            .innerJoin(user, eq(rooms.ownerId, user.id))
+            .where(and(eq(rooms.ownerId, session.user.id), activeRoomCondition))
+            .orderBy(desc(rooms.lastActiveAt))
+            .limit(1)
+        : Promise.resolve([]),
+    ])
 
     return Response.json(
-      { rooms: result.map(toRoomListItem) },
+      { rooms: result.map(toRoomListItem), myRoom: myRoom[0] ? toRoomListItem(myRoom[0]) : null },
       { headers: { 'Cache-Control': 'private, no-store' } },
     )
   } catch {
@@ -94,46 +109,84 @@ export async function POST(request: Request) {
   }
 
   try {
-    const passwordHash = input.password ? await hashRoomPassword(input.password) : null
+    const outcome = await db.transaction(async tx => {
+      // 同一用户的多标签页创建请求先串行执行，避免并发绕过“一人一个有效房间”。
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${session.user.id}))`)
 
-    for (let attempt = 0; attempt < ROOM_CODE_RETRY_LIMIT; attempt += 1) {
-      const [createdRoom] = await db
-        .insert(rooms)
-        .values({
-          id: createRoomId(),
-          code: createRoomCode(),
-          name: input.name,
-          tag: input.tag,
-          passwordHash,
-          ownerId: session.user.id,
-          maxMembers: input.maxMembers,
-          maxStageMembers: input.maxStageMembers,
-        })
-        .onConflictDoNothing({ target: rooms.code })
-        .returning({
+      const now = new Date()
+      const [existingRoom] = await tx
+        .select({
           code: rooms.code,
           name: rooms.name,
           tag: rooms.tag,
+          passwordHash: rooms.passwordHash,
           maxMembers: rooms.maxMembers,
           maxStageMembers: rooms.maxStageMembers,
           currentMemberCount: rooms.currentMemberCount,
           lastActiveAt: rooms.lastActiveAt,
         })
+        .from(rooms)
+        .where(
+          and(
+            eq(rooms.ownerId, session.user.id),
+            or(gt(rooms.currentMemberCount, 0), gt(rooms.emptyExpiresAt, now)),
+          ),
+        )
+        .orderBy(desc(rooms.lastActiveAt))
+        .limit(1)
 
-      if (!createdRoom) continue
+      if (existingRoom) return { kind: 'existing' as const, room: existingRoom }
 
+      const passwordHash = input.password ? await hashRoomPassword(input.password) : null
+      for (let attempt = 0; attempt < ROOM_CODE_RETRY_LIMIT; attempt += 1) {
+        const [createdRoom] = await tx
+          .insert(rooms)
+          .values({
+            id: createRoomId(),
+            code: createRoomCode(),
+            name: input.name,
+            tag: input.tag,
+            passwordHash,
+            ownerId: session.user.id,
+            maxMembers: input.maxMembers,
+            maxStageMembers: input.maxStageMembers,
+          })
+          .onConflictDoNothing({ target: rooms.code })
+          .returning({
+            code: rooms.code,
+            name: rooms.name,
+            tag: rooms.tag,
+            passwordHash: rooms.passwordHash,
+            maxMembers: rooms.maxMembers,
+            maxStageMembers: rooms.maxStageMembers,
+            currentMemberCount: rooms.currentMemberCount,
+            lastActiveAt: rooms.lastActiveAt,
+          })
+
+        if (createdRoom) return { kind: 'created' as const, room: createdRoom }
+      }
+
+      return { kind: 'unavailable' as const }
+    })
+
+    if (outcome.kind === 'existing') {
       return Response.json(
         {
-          room: {
-            ...toRoomListItem({ ...createdRoom, ownerName: session.user.name }),
-            isPasswordProtected: passwordHash !== null,
-          },
+          message: '你已经创建了一个有效房间，请进入“我的房间”。',
+          room: toRoomListItem({ ...outcome.room, ownerName: session.user.name }),
         },
-        { status: 201 },
+        { status: 409 },
       )
     }
 
-    return Response.json({ message: '生成房间号失败，请重试。' }, { status: 503 })
+    if (outcome.kind === 'unavailable') {
+      return Response.json({ message: '生成房间号失败，请重试。' }, { status: 503 })
+    }
+
+    return Response.json(
+      { room: toRoomListItem({ ...outcome.room, ownerName: session.user.name }) },
+      { status: 201 },
+    )
   } catch {
     return Response.json({ message: '创建房间失败，请稍后重试。' }, { status: 500 })
   }

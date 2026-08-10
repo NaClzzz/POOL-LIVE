@@ -11,12 +11,18 @@ import {
   userRoomPlaylistItems,
 } from '../src/db/schema/rooms'
 import { database } from '../src/lib/database-core'
-import { verifyRoomPassword } from '../src/lib/room/password'
+import {
+  hashRoomPassword,
+  ROOM_PASSWORD_MAX_LENGTH,
+  ROOM_PASSWORD_MIN_LENGTH,
+  verifyRoomPassword,
+} from '../src/lib/room/password'
 import type {
   RoomJoinResult,
   RoomPlaybackState,
   RoomPresenceMember,
   RoomRealtimeChatMessage,
+  RoomSettingsPayload,
   RoomSocketSnapshot,
   UserRoomPlaylistItem,
 } from '../src/types/room'
@@ -121,6 +127,9 @@ export class RoomPlaylistError extends Error {}
 
 export class RoomPlaybackError extends Error {}
 
+// 用于区分房主配置校验失败与其他 Socket 房间业务错误。
+export class RoomSettingsError extends Error {}
+
 // 用于 Socket 播放错误事件中校验当前节目版本和歌曲。
 type PlaybackErrorPayload = {
   version: number
@@ -137,6 +146,16 @@ type PlaylistChangedHandler = (userId: string, playlist: UserRoomPlaylistItem[])
 type SkipVoteRecord = {
   version: number
   voterIds: Set<string>
+}
+
+// 用于保存经过服务端清理和范围校验后的房间配置。
+type NormalizedRoomSettings = {
+  name: string
+  tag: string
+  maxMembers: number
+  maxStageMembers: number
+  passwordAction: RoomSettingsPayload['passwordAction']
+  password: string | null
 }
 
 export function normalizeRoomCode(value: unknown) {
@@ -160,6 +179,78 @@ function normalizeChatContent(value: unknown) {
   }
 
   return content
+}
+
+function normalizeRoomSettingsPayload(value: unknown): NormalizedRoomSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new RoomSettingsError('房间设置数据格式不正确。')
+  }
+
+  const input = value as Record<string, unknown>
+  const name = typeof input.name === 'string' ? input.name.trim() : ''
+  const tag = typeof input.tag === 'string' ? input.tag.trim() : ''
+  const maxMembers = input.maxMembers
+  const maxStageMembers = input.maxStageMembers
+  const passwordAction = input.passwordAction
+
+  if (name.length < 2 || name.length > 20) {
+    throw new RoomSettingsError('房间名称长度应为 2 到 20 个字符。')
+  }
+
+  if (tag.length < 2 || tag.length > 12) {
+    throw new RoomSettingsError('房间标签长度应为 2 到 12 个字符。')
+  }
+
+  if (!Number.isInteger(maxMembers) || (maxMembers as number) < 2 || (maxMembers as number) > 50) {
+    throw new RoomSettingsError('最大人数应为 2 到 50 之间的整数。')
+  }
+
+  if (
+    !Number.isInteger(maxStageMembers) ||
+    (maxStageMembers as number) < 1 ||
+    (maxStageMembers as number) > 30
+  ) {
+    throw new RoomSettingsError('最大上台人数应为 1 到 30 之间的整数。')
+  }
+
+  if ((maxStageMembers as number) > (maxMembers as number)) {
+    throw new RoomSettingsError('最大上台人数不能超过最大人数。')
+  }
+
+  if (passwordAction !== 'keep' && passwordAction !== 'set' && passwordAction !== 'remove') {
+    throw new RoomSettingsError('密码操作类型不正确。')
+  }
+
+  const password = input.password
+  if (passwordAction === 'set') {
+    if (typeof password !== 'string') {
+      throw new RoomSettingsError('请设置房间密码。')
+    }
+
+    if (password.length < ROOM_PASSWORD_MIN_LENGTH || password.length > ROOM_PASSWORD_MAX_LENGTH) {
+      throw new RoomSettingsError(
+        `房间密码长度应为 ${ROOM_PASSWORD_MIN_LENGTH} 到 ${ROOM_PASSWORD_MAX_LENGTH} 个字符。`,
+      )
+    }
+
+    return {
+      name,
+      tag,
+      maxMembers: maxMembers as number,
+      maxStageMembers: maxStageMembers as number,
+      passwordAction,
+      password,
+    }
+  }
+
+  return {
+    name,
+    tag,
+    maxMembers: maxMembers as number,
+    maxStageMembers: maxStageMembers as number,
+    passwordAction,
+    password: null,
+  }
 }
 
 // 负责单 Socket 进程中的在线成员、房间加入/离开和持久化聊天。
@@ -605,6 +696,101 @@ export class RoomPresenceService {
       }
 
       return this.toSnapshot(room, onlineMembers)
+    })
+  }
+
+  async updateRoomSettings({
+    roomCode,
+    userId,
+    socketId,
+    payload,
+  }: {
+    roomCode: string
+    userId: string
+    socketId: string
+    payload: unknown
+  }): Promise<RoomSocketSnapshot> {
+    const settings = normalizeRoomSettingsPayload(payload)
+
+    return this.withRoomLock(roomCode, async () => {
+      const onlineMembers = this.onlineRooms.get(roomCode)
+      const member = onlineMembers?.get(userId)
+
+      if (!onlineMembers || !member?.socketIds.has(socketId)) {
+        throw new RoomSettingsError('请先加入房间后再修改设置。')
+      }
+
+      const room = await this.findRoom(roomCode)
+      if (!room) throw new RoomSettingsError('房间不存在或已被清理。')
+      if (room.ownerId !== userId) throw new RoomSettingsError('只有房主可以修改房间设置。')
+
+      const stageQueue = this.stageQueues.get(roomCode) ?? []
+      if (settings.maxMembers < onlineMembers.size) {
+        throw new RoomSettingsError('最大人数不能低于当前在线人数。')
+      }
+      if (settings.maxStageMembers < stageQueue.length) {
+        throw new RoomSettingsError('最大上台人数不能低于当前上台人数。')
+      }
+
+      let passwordHash = room.passwordHash
+      if (settings.passwordAction === 'set' && settings.password) {
+        passwordHash = await hashRoomPassword(settings.password)
+      } else if (settings.passwordAction === 'remove') {
+        passwordHash = null
+      }
+
+      const now = new Date()
+      const [updatedRoom] = await this.db
+        .update(rooms)
+        .set({
+          name: settings.name,
+          tag: settings.tag,
+          passwordHash,
+          maxMembers: settings.maxMembers,
+          maxStageMembers: settings.maxStageMembers,
+          lastActiveAt: now,
+          updatedAt: now,
+        })
+        .where(eq(rooms.id, room.id))
+        .returning()
+
+      if (!updatedRoom) throw new RoomSettingsError('保存房间设置失败。')
+      return this.toSnapshot(updatedRoom, onlineMembers)
+    })
+  }
+
+  // 由房主删除房间及其级联关联数据，并同步清理当前 Socket 进程的房间状态。
+  async dissolveRoom({
+    roomCode,
+    userId,
+    socketId,
+  }: {
+    roomCode: string
+    userId: string
+    socketId: string
+  }): Promise<void> {
+    await this.withRoomLock(roomCode, async () => {
+      const onlineMembers = this.onlineRooms.get(roomCode)
+      const member = onlineMembers?.get(userId)
+
+      if (!onlineMembers || !member?.socketIds.has(socketId)) {
+        throw new RoomSettingsError('请先加入房间后再解散房间。')
+      }
+
+      const room = await this.findRoom(roomCode)
+      if (!room) throw new RoomSettingsError('房间不存在或已被清理。')
+      if (room.ownerId !== userId) throw new RoomSettingsError('只有房主可以解散房间。')
+
+      await this.db.delete(rooms).where(eq(rooms.id, room.id))
+
+      this.clearPlaybackTimer(roomCode)
+      this.stageQueues.delete(roomCode)
+      this.skipVotes.delete(roomCode)
+      this.onlineRooms.delete(roomCode)
+
+      for (const [memberId, activeRoomCode] of this.userRoomCodes) {
+        if (activeRoomCode === roomCode) this.userRoomCodes.delete(memberId)
+      }
     })
   }
 

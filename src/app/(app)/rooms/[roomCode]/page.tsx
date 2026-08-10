@@ -1,17 +1,29 @@
 'use client'
 
-import { ArrowLeftOutlined, CrownOutlined, LockOutlined, TeamOutlined } from '@ant-design/icons'
-import { Alert, Avatar, Button, Card, Input, Tag, Typography } from 'antd'
+import {
+  ArrowLeftOutlined,
+  CrownOutlined,
+  LockOutlined,
+  SettingOutlined,
+  TeamOutlined,
+} from '@ant-design/icons'
+import { Alert, Avatar, Button, Card, Form, Input, Tag, Typography } from 'antd'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
 import { useSession } from '@/lib/auth-client'
 import { getSocket } from '@/lib/socket-client'
+import { RoomLyrics } from '@/components/room/room-lyrics'
+import { RoomSettingsModal } from '@/components/room/room-settings-modal'
 import { useRoomRealtimeStore } from '@/store/room-realtime-store'
 import type {
+  RoomDissolveAcknowledgement,
+  RoomDissolvedPayload,
   RoomPlaybackState,
   RoomRealtimeChatMessage,
+  RoomSettingsAcknowledgement,
+  RoomSettingsPayload,
   RoomSocketSnapshot,
   RoomSwitchRequired,
   UserRoomPlaylistItem,
@@ -79,6 +91,8 @@ export default function RoomPage() {
   const router = useRouter()
   const roomCode = typeof params.roomCode === 'string' ? params.roomCode.toLowerCase() : ''
   const { data: session } = useSession()
+  const [settingsForm] = Form.useForm<RoomSettingsPayload>()
+  // zustand start
   const storedRoomCode = useRoomRealtimeStore(state => state.roomCode)
   const snapshot = useRoomRealtimeStore(state => state.snapshot)
   const playback = useRoomRealtimeStore(state => state.playback)
@@ -90,10 +104,15 @@ export default function RoomPage() {
   const setPlayback = useRoomRealtimeStore(state => state.setPlayback)
   const setConnectionState = useRoomRealtimeStore(state => state.setConnectionState)
   const clearRoom = useRoomRealtimeStore(state => state.clearRoom)
+  // zustand end
   const [socketError, setSocketError] = useState<string | null>(null)
   const [stageError, setStageError] = useState<string | null>(null)
   const [password, setPassword] = useState('')
   const [joinAttempt, setJoinAttempt] = useState(0)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isSavingSettings, setIsSavingSettings] = useState(false)
+  const [isDissolvingRoom, setIsDissolvingRoom] = useState(false)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!roomCode) return
@@ -168,6 +187,12 @@ export default function RoomPage() {
       router.replace('/rooms')
     }
 
+    function handleRoomDissolved(payload: RoomDissolvedPayload) {
+      if (!isCurrent || payload.roomCode !== roomCode) return
+      clearRoom(roomCode)
+      router.replace('/rooms')
+    }
+
     function handleConnectError(error: Error) {
       if (!isCurrent) return
 
@@ -193,6 +218,7 @@ export default function RoomPage() {
     socket.on('user:room-playlist', applyPlaylist)
     socket.on('chat:message', handleChatMessage)
     socket.on('room:forced-leave', handleForcedLeave)
+    socket.on('room:dissolved', handleRoomDissolved)
     socket.on('connect_error', handleConnectError)
     socket.on('disconnect', handleDisconnect)
 
@@ -208,6 +234,7 @@ export default function RoomPage() {
       socket.off('user:room-playlist', applyPlaylist)
       socket.off('chat:message', handleChatMessage)
       socket.off('room:forced-leave', handleForcedLeave)
+      socket.off('room:dissolved', handleRoomDissolved)
       socket.off('connect_error', handleConnectError)
       socket.off('disconnect', handleDisconnect)
       socket.disconnect()
@@ -277,6 +304,42 @@ export default function RoomPage() {
     })
   }
 
+  function handleSaveSettings(values: RoomSettingsPayload) {
+    const socket = getSocket()
+    if (!room || !socket.connected || isSavingSettings) {
+      setSettingsError('实时服务未连接，暂时不能保存房间设置。')
+      return
+    }
+
+    setIsSavingSettings(true)
+    setSettingsError(null)
+    socket.emit('room:update-settings', values, (result: RoomSettingsAcknowledgement) => {
+      setIsSavingSettings(false)
+      if (!result.ok) {
+        setSettingsError(result.message)
+        return
+      }
+
+      setPresence(roomCode, result.snapshot)
+      setIsSettingsOpen(false)
+    })
+  }
+
+  function handleDissolveRoom() {
+    const socket = getSocket()
+    if (!room || !socket.connected || isDissolvingRoom) {
+      setSettingsError('实时服务未连接，暂时不能解散房间。')
+      return
+    }
+
+    setIsDissolvingRoom(true)
+    setSettingsError(null)
+    socket.emit('room:dissolve', (result: RoomDissolveAcknowledgement) => {
+      setIsDissolvingRoom(false)
+      if (!result.ok) setSettingsError(result.message)
+    })
+  }
+
   return (
     <main className="desktop-page !flex !h-[calc(100vh-176px)] !min-h-0 !flex-col !overflow-hidden !px-12 !py-4">
       <header className="mb-3 flex shrink-0 items-center justify-between border-b border-[#dfe4e7] pb-3">
@@ -293,7 +356,25 @@ export default function RoomPage() {
             </h1>
           </div>
         </div>
-        {room ? <span className="shrink-0 text-xs text-[#71808a]">房间号：{room.code}</span> : null}
+        {room ? (
+          <div className="flex shrink-0 items-center gap-2">
+            {isCurrentUserHost ? (
+              <Button
+                type="text"
+                size="small"
+                icon={<SettingOutlined />}
+                aria-label="房间设置"
+                title="房间设置"
+                className="!text-[#71808a] hover:!text-[#1e88e5]"
+                onClick={() => {
+                  setSettingsError(null)
+                  setIsSettingsOpen(true)
+                }}
+              />
+            ) : null}
+            <span className="text-xs text-[#71808a]">房间号：{room.code}</span>
+          </div>
+        ) : null}
       </header>
 
       {socketError ? (
@@ -410,14 +491,27 @@ export default function RoomPage() {
                 <span className="shrink-0 text-xs text-[#71808a]">{playback?.song?.artists ?? '服务端自动轮播'}</span>
               </div>
               <div className="flex min-h-0 flex-1 flex-col justify-center overflow-hidden py-2 text-center">
-                <p className="m-0 truncate text-sm text-[#71808a]">歌词将随当前歌曲在此区域滚动显示</p>
-                <p className="m-0 mt-1 truncate text-base font-medium text-[#34454f]">···</p>
-                <p className="m-0 mt-1 truncate text-sm text-[#71808a]">预留三行歌词显示空间</p>
+                <RoomLyrics playback={playback} />
               </div>
             </div>
           </Card>
         </div>
       ) : null}
+      <RoomSettingsModal
+        open={isSettingsOpen}
+        room={room}
+        form={settingsForm}
+        confirmLoading={isSavingSettings}
+        dissolveLoading={isDissolvingRoom}
+        error={settingsError}
+        onClose={() => {
+          if (isSavingSettings || isDissolvingRoom) return
+          setIsSettingsOpen(false)
+          setSettingsError(null)
+        }}
+        onSave={handleSaveSettings}
+        onDissolve={handleDissolveRoom}
+      />
     </main>
   )
 }

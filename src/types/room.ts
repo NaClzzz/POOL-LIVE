@@ -46,6 +46,40 @@ export type RoomSocketSnapshot = {
   stageMembers: RoomPresenceMember[]
 }
 
+// 用于房主修改房间基础配置时提交的 Socket 事件数据。
+export type RoomSettingsPayload = {
+  name: string
+  tag: string
+  maxMembers: number
+  maxStageMembers: number
+  passwordAction: 'keep' | 'set' | 'remove'
+  password?: string
+}
+
+// 用于房主修改房间配置后接收成功快照或可展示的失败原因。
+export type RoomSettingsAcknowledgement =
+  | {
+      ok: true
+      snapshot: RoomSocketSnapshot
+    }
+  | {
+      ok: false
+      message: string
+    }
+
+// 用于房主解散房间事件的确认结果，让发起页面能够展示失败原因。
+export type RoomDissolveAcknowledgement =
+  | { ok: true }
+  | {
+      ok: false
+      message: string
+    }
+
+// 用于通知房间内所有标签页当前房间已被房主解散。
+export type RoomDissolvedPayload = {
+  roomCode: string
+}
+
 // 用于真实 Socket 聊天历史和实时广播的持久化消息数据。
 export type RoomRealtimeChatMessage = {
   id: string

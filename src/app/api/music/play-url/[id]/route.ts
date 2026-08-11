@@ -19,7 +19,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   const upstreamUrl = new URL('/song/url/v1', musicApiBaseUrl)
   upstreamUrl.searchParams.set('id', id)
-  upstreamUrl.searchParams.set('level', 'standard')
+  upstreamUrl.searchParams.set('level', 'exhigh')
+  upstreamUrl.searchParams.set('unblock', 'true')
 
   try {
     const response = await fetch(upstreamUrl, {

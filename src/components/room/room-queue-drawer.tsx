@@ -197,7 +197,7 @@ export function RoomQueueDrawer({
     <div className="fixed inset-0 z-50">
       <button
         type="button"
-        aria-label="关闭上台歌单"
+        aria-label="关闭房间歌单"
         className={`absolute inset-0 bg-[#222a30]/20 transition-opacity duration-[260ms] ease-in-out ${
           isVisible ? 'opacity-100' : 'opacity-0'
         }`}
@@ -215,12 +215,12 @@ export function RoomQueueDrawer({
           <div>
             <p className="m-0 text-xs font-semibold tracking-[0.16em] text-[#1e88e5]">GLOBAL STAGE PLAYLIST</p>
             <h2 id="room-queue-drawer-title" className="m-0 mt-1 text-lg font-semibold text-[#222a30]">
-              我的上台歌单
+              我的房间歌单
             </h2>
           </div>
           <button
             type="button"
-            aria-label="关闭上台歌单"
+            aria-label="关闭房间歌单"
             onClick={onClose}
             className="grid h-8 w-8 place-items-center rounded-full text-lg text-[#71808a] hover:bg-[#f0f7fc] hover:text-[#222a30]"
           >
@@ -238,7 +238,7 @@ export function RoomQueueDrawer({
                 className="mt-3"
                 prefix={<SearchOutlined className="text-[#9aa5ac]" />}
                 suffix={isSearching ? <Spin size="small" /> : null}
-                placeholder="搜索歌名、歌手或专辑"
+                placeholder="搜索歌名或歌手"
                 value={keywords}
                 onChange={event => setKeywords(event.target.value)}
                 onPressEnter={() => void handleSearch()}
@@ -273,7 +273,7 @@ export function RoomQueueDrawer({
                       type="button"
                       disabled={alreadyAdded || isMutating}
                       onClick={() => onAddSong(song)}
-                      aria-label={`加入 ${song.name} 到上台歌单`}
+                      aria-label={`加入 ${song.name} 到房间歌单`}
                       className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[#1e88e5] hover:bg-[#eaf6ff] disabled:cursor-not-allowed disabled:text-[#c3cbd0]"
                     >
                       <PlusOutlined />
@@ -290,7 +290,7 @@ export function RoomQueueDrawer({
           <section className="flex min-h-0 flex-col">
             <div className="border-b border-[#edf0f2] px-5 py-4">
               <div className="flex items-center justify-between gap-3">
-                <p className="m-0 text-sm font-semibold text-[#34454f]">全局上台歌单</p>
+                <p className="m-0 text-sm font-semibold text-[#34454f]">房间歌单</p>
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
@@ -301,8 +301,8 @@ export function RoomQueueDrawer({
                     随机排序
                   </button>
                   <Popconfirm
-                    title="用喜欢列表覆盖上台歌单？"
-                    description="当前上台歌单会被替换，正在播放的歌曲不会中断。"
+                    title="用喜欢列表覆盖房间歌单？"
+                    description="当前房间歌单会被替换，正在播放的歌曲不会中断。"
                     okText="覆盖"
                     cancelText="取消"
                     onConfirm={onImportLiked}
@@ -316,7 +316,7 @@ export function RoomQueueDrawer({
                     </button>
                   </Popconfirm>
                   <Popconfirm
-                    title="清空上台歌单？"
+                    title="清空房间歌单？"
                     description="正在播放的歌曲不会中断。"
                     okText="清空"
                     cancelText="取消"
@@ -334,7 +334,7 @@ export function RoomQueueDrawer({
                 </div>
               </div>
               <p className="m-0 mt-1 text-xs text-[#71808a]">
-                所有房间共用这一份歌单；轮到你时队首歌曲播放后会移至队尾。
+                轮到你时自动播放队首歌曲并将其移至队尾。
               </p>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">

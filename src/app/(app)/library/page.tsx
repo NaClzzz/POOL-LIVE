@@ -378,9 +378,9 @@ export default function LibraryPage() {
   return (
     <main className="desktop-page">
       <PageHeading
-        eyebrow="我的收藏"
+        eyebrow="MY FAVORITE MUSIC"
         title="我喜欢的音乐"
-        description="搜索时点亮爱心收藏歌曲，也可以导入网易云公开歌单。"
+        description="搜索时点亮爱心收藏歌曲，或在这里导入网易云公开歌单。"
       />
 
       <Card className="mb-6" title="导入网易云歌单" styles={{ body: { padding: 28 } }}>
@@ -406,7 +406,7 @@ export default function LibraryPage() {
           </Button>
         </Space.Compact>
         <Typography.Text type="secondary" className="mt-3 block">
-          例如：3778678，或 https://music.163.com/#/playlist?id=3778678。首版最多导入前 500 首。
+          例如：3778678，或 https://music.163.com/#/playlist?id=3778678。
         </Typography.Text>
       </Card>
 
@@ -416,7 +416,7 @@ export default function LibraryPage() {
 
       <Card className="mb-6" title="AI 赏析" styles={{ body: { padding: 28 } }}>
         <Typography.Paragraph className="!mb-5 !max-w-3xl !leading-8 !text-[#71808a]">
-          将读取你当前喜欢列表中的全部歌名，并随机抽取几首歌的歌词，生成一次不保存的歌单赏析。
+          读取你当前喜欢列表中的歌曲，生成一次歌单赏析。
         </Typography.Paragraph>
         <Space wrap>
           <Button

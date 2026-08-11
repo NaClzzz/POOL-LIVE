@@ -97,7 +97,7 @@ export default function ProfilePage() {
   return (
     <main className="desktop-page desktop-page--narrow">
       <PageHeading
-        eyebrow="账号设置"
+        eyebrow="PERSONAL CENTER"
         title="个人中心"
         description="管理你的站内昵称和登录账号。"
       />

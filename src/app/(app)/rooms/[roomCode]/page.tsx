@@ -442,7 +442,7 @@ export default function RoomPage() {
             <div className="mb-3 flex items-center justify-between border-b border-[#edf0f2] pb-3">
               <div>
                 <p className="m-0 text-sm font-semibold text-[#34454f]">上台成员</p>
-                <p className="m-0 mt-0.5 text-xs text-[#71808a]">顺序固定，按从左到右循环播放。</p>
+                <p className="m-0 mt-0.5 text-xs text-[#71808a]">队列顺序固定，从左到右循环播放每位成员房间歌单的第一首歌。</p>
               </div>
               <span className="text-xs text-[#71808a]">{stageMembers.length}/{room.maxStageMembers} 人</span>
             </div>
@@ -488,7 +488,7 @@ export default function RoomPage() {
                     {playback?.song ? playback.song.name : '等待上台成员准备歌曲'}
                   </p>
                 </div>
-                <span className="shrink-0 text-xs text-[#71808a]">{playback?.song?.artists ?? '服务端自动轮播'}</span>
+                <span className="shrink-0 text-xs text-[#71808a]">{playback?.song?.artists ?? ''}</span>
               </div>
               <div className="flex min-h-0 flex-1 flex-col justify-center overflow-hidden py-2 text-center">
                 <RoomLyrics playback={playback} />

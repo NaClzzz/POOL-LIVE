@@ -261,15 +261,15 @@ export default function SearchPage() {
   return (
     <main className="desktop-page">
       <PageHeading
-        eyebrow="发现音乐"
+        eyebrow="SEARCH MUSIC"
         title="搜索音乐"
-        description="输入关键词，从本地音乐 API 搜索歌曲、歌手和公开歌单。"
+        description="输入关键词，搜索你喜欢的歌曲或歌手。"
       />
       <Card className="mb-6" styles={{ body: { padding: 28 } }}>
         <Space.Compact className="w-full">
           <Input
             size="large"
-            placeholder="搜索歌曲、歌手或歌单"
+            placeholder="搜索你喜欢的歌曲或歌手"
             value={keywords}
             onChange={event => setKeywords(event.target.value)}
             onPressEnter={handleSearch}
@@ -286,9 +286,7 @@ export default function SearchPage() {
             搜索
           </Button>
         </Space.Compact>
-        <Typography.Text type="secondary" className="mt-3 block">
-          例如：周杰伦、晴天、告白气球
-        </Typography.Text>
+        
       </Card>
 
       {likesError ? <Alert className="mb-6" type="error" showIcon message={likesError} /> : null}

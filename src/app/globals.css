@@ -104,23 +104,10 @@ a {
 }
 
 .auth-shell {
-  position: relative;
   display: grid;
   min-height: 100vh;
   place-items: center;
-  overflow: hidden;
   background: #f6f7f7;
-}
-
-.auth-shell::before {
-  position: absolute;
-  left: 8%;
-  top: 14%;
-  width: 420px;
-  height: 420px;
-  border-radius: 999px;
-  background: var(--accent);
-  content: "";
 }
 
 .auth-panel {

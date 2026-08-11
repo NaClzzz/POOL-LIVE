@@ -187,7 +187,7 @@ export default function RoomsLobbyPage() {
       <PageHeading
         eyebrow="POOL LIVE"
         title="一起听"
-        description="创建一个听歌房，按上台顺序轮流播放彼此的歌单。当前版本已接入真实房间创建与大厅列表。"
+        description="创建一个听歌房，按上台顺序轮流播放彼此的歌单。"
       />
 
       <Card className="mb-6" styles={{ body: { padding: 28 } }}>
@@ -236,14 +236,11 @@ export default function RoomsLobbyPage() {
             {myRoom ? '我的房间' : '创建房间'}
           </Button>
         </div>
-        <Typography.Text type="secondary" className="mt-3 block">
-          房间密码只会暂存在当前浏览器会话中，后续由房间 Socket 服务端校验，不会写入链接。
-        </Typography.Text>
       </Card>
 
       {joinError ? <Alert className="mb-6" type="error" showIcon message={joinError} /> : null}
 
-      <section>
+      <section className="mt-4">
         <div className="mb-4 flex items-end justify-between">
           <div>
             <p className="m-0 text-xs font-semibold tracking-[0.16em] text-[#1e88e5]">
@@ -273,7 +270,7 @@ export default function RoomsLobbyPage() {
         {!isLoadingRooms && !roomListError && rooms.length === 0 ? (
           <Card styles={{ body: { padding: 24 } }}>
             <Typography.Text type="secondary">
-              暂时没有可加入的公开房间，创建第一个吧。
+              暂时没有可加入的公开房间，创建一个吧。
             </Typography.Text>
           </Card>
         ) : null}

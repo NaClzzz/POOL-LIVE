@@ -269,7 +269,6 @@ async function startSocketServer() {
       socket.data.roomCode = roomCode
       acknowledge?.({ ok: true, ...joinedRoom })
       io.to(socketRoomName).emit('room:presence', joinedRoom.snapshot)
-      io.to(socketRoomName).emit('room:playback', joinedRoom.playback)
       console.log(`[Socket] ${user.id} 已加入 ${socketRoomName}，当前 ${joinedRoom.snapshot.room.memberCount} 人`)
     } catch (error) {
       if (allowSwitch && error instanceof RoomJoinError && error.code === 'ALREADY_IN_ROOM') {

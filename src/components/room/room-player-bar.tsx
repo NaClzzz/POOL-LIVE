@@ -2,7 +2,6 @@
 
 import {
   DislikeOutlined,
-  MessageOutlined,
   SoundOutlined,
   StepForwardOutlined,
   UnorderedListOutlined,
@@ -11,7 +10,6 @@ import { Avatar, Layout, Slider, Tooltip, Typography } from 'antd'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 
-import { RoomChatDrawer } from '@/components/room/room-chat-drawer'
 import { RoomQueueDrawer } from '@/components/room/room-queue-drawer'
 import { useSession } from '@/lib/auth-client'
 import { getRoomPlaybackPositionMs } from '@/lib/room/playback'
@@ -20,14 +18,6 @@ import { usePlayerStore } from '@/store/player-store'
 import { useRoomRealtimeStore } from '@/store/room-realtime-store'
 import type { PlayerSong } from '@/types/player'
 import type { RoomPlaybackState, UserRoomPlaylistItem } from '@/types/room'
-
-// 用于 chat:send 确认回调，通知聊天抽屉是否应清空输入内容。
-type ChatMessageAcknowledgement =
-  | { ok: true }
-  | {
-      ok: false
-      message: string
-    }
 
 // 用于房间全局上台歌单修改事件的确认回调。
 type PlaylistAcknowledgement =
@@ -51,12 +41,6 @@ type PlayUrlResponse = {
   message?: string
 }
 
-// 用于房间音频加载后标识当前可播放节目版本。
-type RoomAudioSource = {
-  version: number
-  url: string
-}
-
 function formatTime(time: number) {
   if (!Number.isFinite(time) || time < 0) return '00:00'
 
@@ -64,6 +48,70 @@ function formatTime(time: number) {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = String(totalSeconds % 60).padStart(2, '0')
   return `${String(minutes).padStart(2, '0')}:${seconds}`
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
+function waitForAudioMetadata(audio: HTMLAudioElement, signal: AbortSignal) {
+  if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) return Promise.resolve()
+
+  return new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      cleanup()
+      reject(new Error('房间歌曲加载超时。'))
+    }, 10_000)
+
+    const cleanup = () => {
+      window.clearTimeout(timeout)
+      audio.removeEventListener('loadedmetadata', handleLoaded)
+      audio.removeEventListener('error', handleError)
+      signal.removeEventListener('abort', handleAbort)
+    }
+
+    const handleLoaded = () => {
+      cleanup()
+      resolve()
+    }
+
+    const handleError = () => {
+      cleanup()
+      reject(new Error('房间歌曲媒体加载失败。'))
+    }
+
+    const handleAbort = () => {
+      cleanup()
+      reject(new DOMException('Room audio loading was cancelled.', 'AbortError'))
+    }
+
+    audio.addEventListener('loadedmetadata', handleLoaded, { once: true })
+    audio.addEventListener('error', handleError, { once: true })
+    signal.addEventListener('abort', handleAbort, { once: true })
+  })
+}
+
+function waitForRoomStart(delayMs: number, signal: AbortSignal) {
+  if (delayMs <= 0) return Promise.resolve()
+
+  return new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      cleanup()
+      resolve()
+    }, delayMs)
+
+    const handleAbort = () => {
+      cleanup()
+      reject(new DOMException('Room audio start was cancelled.', 'AbortError'))
+    }
+
+    const cleanup = () => {
+      window.clearTimeout(timeout)
+      signal.removeEventListener('abort', handleAbort)
+    }
+
+    signal.addEventListener('abort', handleAbort, { once: true })
+  })
 }
 
 export function RoomPlayerBar() {
@@ -76,23 +124,22 @@ export function RoomPlayerBar() {
   const volume = usePlayerStore(state => state.volume)
   const setVolume = usePlayerStore(state => state.setVolume)
   const storedRoomCode = useRoomRealtimeStore(state => state.roomCode)
-  const messages = useRoomRealtimeStore(state => state.messages)
   const playlist = useRoomRealtimeStore(state => state.myPlaylist)
   const playback = useRoomRealtimeStore(state => state.playback)
   const setPlaylist = useRoomRealtimeStore(state => state.setPlaylist)
   const setPlayback = useRoomRealtimeStore(state => state.setPlayback)
-  const [activePanel, setActivePanel] = useState<'chat' | 'queue' | null>(null)
-  const [chatError, setChatError] = useState<string | null>(null)
+  const [activePanel, setActivePanel] = useState<'queue' | null>(null)
   const [playlistError, setPlaylistError] = useState<string | null>(null)
   const [isMutatingPlaylist, setIsMutatingPlaylist] = useState(false)
-  const [audioSource, setAudioSource] = useState<RoomAudioSource | null>(null)
   const [audioError, setAudioError] = useState<string | null>(null)
   const [needsAudioUnlock, setNeedsAudioUnlock] = useState(false)
-  const [unlockAttempt, setUnlockAttempt] = useState(0)
   const [displayPosition, setDisplayPosition] = useState(0)
   const [playbackActionError, setPlaybackActionError] = useState<string | null>(null)
   const [isSubmittingPlaybackAction, setIsSubmittingPlaybackAction] = useState(false)
   const canUseRoom = Boolean(storedRoomCode && storedRoomCode === currentPathRoomCode)
+  const playbackVersion = playback?.version ?? null
+  const playbackSongId = playback?.song?.id ?? null
+  const playbackStatus = playback?.status ?? 'idle'
   const currentSong = canUseRoom ? playback?.song ?? null : null
   const isCurrentPlayer = Boolean(
     session?.user.id && playback?.status === 'playing' && playback.activeMemberId === session.user.id,
@@ -125,74 +172,93 @@ export function RoomPlayerBar() {
 
   useEffect(() => {
     const audio = audioRef.current
-    const currentPlayback = playback
     const requestId = audioRequestIdRef.current + 1
     audioRequestIdRef.current = requestId
+    const abortController = new AbortController()
 
-    if (!canUseRoom || !currentPlayback || currentPlayback.status !== 'playing' || !currentPlayback.song) {
+    if (
+      !canUseRoom ||
+      playbackStatus !== 'playing' ||
+      playbackVersion === null ||
+      playbackSongId === null
+    ) {
       audio?.pause()
-      const resetFrame = requestAnimationFrame(() => {
-        setAudioSource(null)
-        setNeedsAudioUnlock(false)
-      })
-      return () => cancelAnimationFrame(resetFrame)
+      return () => abortController.abort()
     }
 
-    const playablePlayback = currentPlayback
-    const playableSong = currentPlayback.song
-
-    let isCurrent = true
-    const resetFrame = requestAnimationFrame(() => {
-      setAudioError(null)
-      setNeedsAudioUnlock(false)
-    })
-
-    async function loadRoomAudio() {
+    async function loadAndStartRoomAudio() {
       try {
-        const response = await fetch(`/api/music/play-url/${playableSong.id}`)
+        const response = await fetch(`/api/music/play-url/${playbackSongId}`, {
+          signal: abortController.signal,
+        })
         const data = (await response.json()) as PlayUrlResponse
         if (!response.ok) throw new Error(data.message || '获取房间播放地址失败。')
 
         const url = data.data?.[0]?.url
         if (!url) throw new Error('这首歌暂时无法播放，可能受版权或会员限制。')
-        if (!isCurrent || audioRequestIdRef.current !== requestId) return
+        if (abortController.signal.aborted || audioRequestIdRef.current !== requestId) return
 
         const currentAudio = audioRef.current
-        if (currentAudio) {
-          currentAudio.pause()
-          currentAudio.src = url
-          currentAudio.load()
+        if (!currentAudio) return
+
+        setAudioError(null)
+        setNeedsAudioUnlock(false)
+        currentAudio.pause()
+        currentAudio.src = url
+        currentAudio.load()
+        await waitForAudioMetadata(currentAudio, abortController.signal)
+        if (abortController.signal.aborted || audioRequestIdRef.current !== requestId) return
+
+        const latestPlayback = useRoomRealtimeStore.getState().playback
+        if (
+          !latestPlayback ||
+          latestPlayback.status !== 'playing' ||
+          latestPlayback.version !== playbackVersion ||
+          latestPlayback.song?.id !== playbackSongId
+        ) {
+          return
         }
-        setAudioSource({ version: playablePlayback.version, url })
+
+        const startAt = latestPlayback.startedAt ? new Date(latestPlayback.startedAt).getTime() : Number.NaN
+        if (Number.isFinite(startAt)) {
+          await waitForRoomStart(Math.max(0, startAt - Date.now()), abortController.signal)
+        }
+        if (abortController.signal.aborted || audioRequestIdRef.current !== requestId) return
+
+        const currentPlayback = useRoomRealtimeStore.getState().playback
+        if (
+          !currentPlayback ||
+          currentPlayback.status !== 'playing' ||
+          currentPlayback.version !== playbackVersion ||
+          currentPlayback.song?.id !== playbackSongId
+        ) {
+          return
+        }
+
+        const targetPosition = getRoomPlaybackPositionMs(currentPlayback) / 1000
+        const mediaDuration = currentAudio.duration
+        currentAudio.currentTime = Number.isFinite(mediaDuration) && mediaDuration > 0
+          ? Math.min(targetPosition, mediaDuration)
+          : targetPosition
+
+        await currentAudio.play()
+        if (abortController.signal.aborted || audioRequestIdRef.current !== requestId) return
+        setNeedsAudioUnlock(false)
+        setAudioError(null)
       } catch (loadFailure) {
-        if (!isCurrent || audioRequestIdRef.current !== requestId) return
+        if (abortController.signal.aborted || audioRequestIdRef.current !== requestId || isAbortError(loadFailure)) return
         setAudioError(loadFailure instanceof Error ? loadFailure.message : '房间歌曲播放失败。')
+        if (loadFailure instanceof DOMException && loadFailure.name === 'NotAllowedError') {
+          setNeedsAudioUnlock(true)
+        }
       }
     }
 
-    void loadRoomAudio()
+    void loadAndStartRoomAudio()
     return () => {
-      isCurrent = false
-      cancelAnimationFrame(resetFrame)
+      abortController.abort()
     }
-  }, [canUseRoom, playback, playback?.song?.id, playback?.status, playback?.version])
-
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio || !audioSource || !playback || playback.status !== 'playing') return
-    if (audioSource.version !== playback.version) return
-
-    const targetPosition = getRoomPlaybackPositionMs(playback) / 1000
-    if (Math.abs(audio.currentTime - targetPosition) > 1) audio.currentTime = targetPosition
-
-    void audio.play().then(
-      () => {
-        setNeedsAudioUnlock(false)
-        setAudioError(null)
-      },
-      () => setNeedsAudioUnlock(true),
-    )
-  }, [audioSource, playback, unlockAttempt])
+  }, [canUseRoom, playbackSongId, playbackStatus, playbackVersion])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -204,30 +270,17 @@ export function RoomPlayerBar() {
     if (typeof nextVolume === 'number') setVolume(nextVolume / 100)
   }
 
-  async function handleSendChatMessage(content: string) {
-    if (!storedRoomCode || !canUseRoom) {
-      setChatError('正在加入房间，暂时不能发送消息。')
-      return false
-    }
+  function handleUnlockAudio() {
+    const audio = audioRef.current
+    if (!audio) return
 
-    const socket = getSocket()
-    if (!socket.connected) {
-      setChatError('实时服务未连接，暂时不能发送消息。')
-      return false
-    }
-
-    return new Promise<boolean>(resolve => {
-      socket.emit('chat:send', { content }, (result: ChatMessageAcknowledgement) => {
-        if (result.ok) {
-          setChatError(null)
-          resolve(true)
-          return
-        }
-
-        setChatError(result.message)
-        resolve(false)
-      })
-    })
+    void audio.play().then(
+      () => {
+        setNeedsAudioUnlock(false)
+        setAudioError(null)
+      },
+      () => setNeedsAudioUnlock(true),
+    )
   }
 
   function handlePlaylistMutation(
@@ -334,14 +387,6 @@ export function RoomPlayerBar() {
         onImportLiked={() => handlePlaylistAction('room:playlist:import-liked')}
         onClear={() => handlePlaylistAction('room:playlist:clear')}
       />
-      <RoomChatDrawer
-        open={activePanel === 'chat'}
-        messages={canUseRoom ? messages : []}
-        currentUserId={session?.user.id}
-        error={chatError}
-        onClose={() => setActivePanel(null)}
-        onSend={handleSendChatMessage}
-      />
       <Layout.Footer className="!fixed !bottom-0 !left-0 !right-0 !z-30 !flex !min-h-24 !items-center !gap-4 !border-t !border-[#dfe4e7] !bg-white !px-12 !py-3">
         <div className="flex min-w-0 items-center gap-3 lg:max-w-xs">
           <Avatar shape="square" size={56} src={currentSong?.coverUrl} className="!shrink-0 !bg-[#42a5f5]">
@@ -432,7 +477,7 @@ export function RoomPlayerBar() {
           {needsAudioUnlock ? (
             <button
               type="button"
-              onClick={() => setUnlockAttempt(value => value + 1)}
+              onClick={handleUnlockAudio}
               className="rounded-full bg-[#eaf6ff] px-3 py-1 text-xs font-medium text-[#1e88e5]"
             >
               点击开启声音
@@ -450,20 +495,6 @@ export function RoomPlayerBar() {
               className="grid h-8 w-8 place-items-center rounded-full text-lg text-[#52616a] hover:bg-[#eaf6ff] hover:text-[#1e88e5] disabled:cursor-not-allowed disabled:text-[#c3cbd0]"
             >
               <UnorderedListOutlined />
-            </button>
-          </Tooltip>
-          <Tooltip title={canUseRoom ? '打开房间聊天' : '正在连接房间聊天'}>
-            <button
-              type="button"
-              disabled={!canUseRoom}
-              aria-label="打开房间聊天"
-              onClick={() => {
-                setChatError(null)
-                setActivePanel('chat')
-              }}
-              className="grid h-8 w-8 place-items-center rounded-full text-lg text-[#52616a] hover:bg-[#eaf6ff] hover:text-[#1e88e5] disabled:cursor-not-allowed disabled:text-[#c3cbd0]"
-            >
-              <MessageOutlined />
             </button>
           </Tooltip>
         </div>

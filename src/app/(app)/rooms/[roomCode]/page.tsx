@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react'
 
 import { useSession } from '@/lib/auth-client'
 import { getSocket } from '@/lib/socket-client'
+import { RoomChatPanel } from '@/components/room/room-chat-panel'
 import { RoomLyrics } from '@/components/room/room-lyrics'
 import { RoomSettingsModal } from '@/components/room/room-settings-modal'
 import { useRoomRealtimeStore } from '@/store/room-realtime-store'
@@ -51,6 +52,14 @@ type StageActionAcknowledgement =
       ok: true
       snapshot: RoomSocketSnapshot
     }
+  | {
+      ok: false
+      message: string
+    }
+
+// 用于 chat:send 确认回调，通知常驻聊天栏是否应清空输入内容。
+type ChatMessageAcknowledgement =
+  | { ok: true }
   | {
       ok: false
       message: string
@@ -95,6 +104,7 @@ export default function RoomPage() {
   // zustand start
   const storedRoomCode = useRoomRealtimeStore(state => state.roomCode)
   const snapshot = useRoomRealtimeStore(state => state.snapshot)
+  const messages = useRoomRealtimeStore(state => state.messages)
   const playback = useRoomRealtimeStore(state => state.playback)
   const connectionState = useRoomRealtimeStore(state => state.connectionState)
   const setJoinedRoom = useRoomRealtimeStore(state => state.setJoinedRoom)
@@ -113,6 +123,7 @@ export default function RoomPage() {
   const [isSavingSettings, setIsSavingSettings] = useState(false)
   const [isDissolvingRoom, setIsDissolvingRoom] = useState(false)
   const [settingsError, setSettingsError] = useState<string | null>(null)
+  const [chatError, setChatError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!roomCode) return
@@ -304,6 +315,27 @@ export default function RoomPage() {
     })
   }
 
+  async function handleSendChatMessage(content: string) {
+    const socket = getSocket()
+    if (!room || storedRoomCode !== roomCode || !socket.connected) {
+      setChatError('实时服务未连接，暂时不能发送消息。')
+      return false
+    }
+
+    return new Promise<boolean>(resolve => {
+      socket.emit('chat:send', { content }, (result: ChatMessageAcknowledgement) => {
+        if (result.ok) {
+          setChatError(null)
+          resolve(true)
+          return
+        }
+
+        setChatError(result.message)
+        resolve(false)
+      })
+    })
+  }
+
   function handleSaveSettings(values: RoomSettingsPayload) {
     const socket = getSocket()
     if (!room || !socket.connected || isSavingSettings) {
@@ -341,7 +373,7 @@ export default function RoomPage() {
   }
 
   return (
-    <main className="desktop-page !flex !h-[calc(100vh-176px)] !min-h-0 !flex-col !overflow-hidden !px-12 !py-4">
+    <main className="desktop-page desktop-page--room !flex !h-[calc(100vh-176px)] !min-h-0 !flex-col !overflow-hidden !px-12 !py-4">
       <header className="mb-3 flex shrink-0 items-center justify-between border-b border-[#dfe4e7] pb-3">
         <div className="flex min-w-0 items-center gap-4">
           <Link href="/rooms" className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-[#71808a] hover:text-[#1e88e5]">
@@ -413,7 +445,8 @@ export default function RoomPage() {
       ) : null}
 
       {room ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+        <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
+          <div className="flex min-w-0 min-h-0 flex-1 flex-col gap-3 overflow-hidden">
           <Card className="shrink-0" styles={{ body: { padding: 18 } }}>
             <div className="flex items-center justify-between border-b border-[#edf0f2] pb-3">
               <div className="flex items-center gap-3">
@@ -495,6 +528,15 @@ export default function RoomPage() {
               </div>
             </div>
           </Card>
+          </div>
+          <div className="w-[360px] shrink-0">
+            <RoomChatPanel
+              messages={messages}
+              currentUserId={currentUserId}
+              error={chatError}
+              onSend={handleSendChatMessage}
+            />
+          </div>
         </div>
       ) : null}
       <RoomSettingsModal

@@ -29,6 +29,8 @@ import type {
 
 const EMPTY_ROOM_TTL_MS = 30 * 60 * 1000
 const RECENT_MESSAGE_LIMIT = 50
+// 新节目开始前为客户端获取音源和加载媒体元数据预留的时间（毫秒）。
+const ROOM_PLAYBACK_START_LEAD_MS = 2_000
 
 // 用于校验并规范客户端提交的歌曲元数据，避免把任意对象写入数据库。
 function normalizePlaylistSong(value: unknown) {
@@ -1212,7 +1214,6 @@ export class RoomPresenceService {
   ) {
     const stageQueue = this.stageQueues.get(room.code) ?? []
     const current = await this.getRoomPlayback(room)
-    const now = new Date()
     this.skipVotes.delete(room.code)
 
     if (stageQueue.length === 0) {
@@ -1254,7 +1255,7 @@ export class RoomPresenceService {
         currentItemId: nextSong.id,
         song: this.toPlaylistItem(nextSong),
         status: 'playing',
-        startedAt: now,
+        startedAt: new Date(Date.now() + ROOM_PLAYBACK_START_LEAD_MS),
         startOffsetMs: 0,
         durationMs: Math.max(1000, nextSong.durationMs),
         version: current.version + 1,

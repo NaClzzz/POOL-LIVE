@@ -66,6 +66,11 @@ a {
   width: 980px;
 }
 
+/* 听歌房需要为常驻聊天栏和歌词区预留更宽的桌面空间。 */
+.desktop-page--room {
+  width: 1440px;
+}
+
 .page-heading {
   margin-bottom: 36px;
   border-bottom: 1px solid var(--line);

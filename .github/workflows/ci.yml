@@ -1,0 +1,59 @@
+name: CI
+
+# 每次推送 main，或向 main 创建 / 更新 Pull Request 时自动执行。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# CI 只需要读取仓库代码，不授予发布、写入仓库或访问 ECS 的权限。
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint, type-check and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # 构建时仅提供占位配置，真实 .env.local 和任何密钥都不会上传到 GitHub。
+    env:
+      DATABASE_URL: postgresql://ci_user:ci_password@127.0.0.1:5432/ci_database
+      BETTER_AUTH_SECRET: ci-only-placeholder-secret-not-for-production
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_SOCKET_URL: http://localhost:3001
+      SOCKET_PORT: "3001"
+      MUSIC_API_BASE_URL: http://127.0.0.1:3002
+
+    steps:
+      # 把本次 push 或 PR 的代码下载到 GitHub 提供的临时机器。
+      - name: Check out source code
+        uses: actions/checkout@v6
+
+      # 固定 pnpm 版本，避免 CI 与 package.json 的包管理器版本不一致。
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      # 安装与本地一致的 Node.js，并缓存 pnpm 下载缓存以加快后续检查。
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      # 严格按 pnpm-lock.yaml 安装，防止 CI 悄悄升级依赖。
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ESLint
+        run: pnpm lint
+
+      - name: Run TypeScript type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Build Next.js application
+        run: pnpm build

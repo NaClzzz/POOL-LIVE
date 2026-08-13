@@ -1,0 +1,78 @@
+name: CD
+
+# 仅在 CI 成功完成后运行。条件会进一步限制为 main 分支的 push，
+# 因此 Pull Request 的检查不会触发生产环境部署。
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+# 多次 push 时让部署请求排队，避免两条任务同时修改 ECS 上的同一份代码。
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to ECS
+    # 只接受 main 分支 push 产生的成功 CI，不接受 PR 或失败的 CI。
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      ECS_HOST: ${{ secrets.ECS_HOST }}
+      ECS_USER: ${{ secrets.ECS_USER }}
+      ECS_SSH_PRIVATE_KEY: ${{ secrets.ECS_SSH_PRIVATE_KEY }}
+      ECS_SSH_KNOWN_HOSTS: ${{ secrets.ECS_SSH_KNOWN_HOSTS }}
+      # 部署通过 CI 的确切提交，避免在新 push 尚未通过检查时提前部署它。
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+
+    steps:
+      # 私钥只写入 GitHub runner 的临时文件，任务结束后该临时机器会被销毁。
+      - name: Configure deployment SSH key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          install -m 600 /dev/null "$HOME/.ssh/pool_github_actions"
+          printf '%s\n' "$ECS_SSH_PRIVATE_KEY" > "$HOME/.ssh/pool_github_actions"
+
+          # 使用你已验证并保存到 GitHub Secret 的 ECS 主机公钥，拒绝未知主机。
+          printf '%s\n' "$ECS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      # ECS 保留自己的 .env.local；此处只更新 Git 已跟踪的应用代码和构建产物。
+      - name: Update application and restart services
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh \
+            -i "$HOME/.ssh/pool_github_actions" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$ECS_USER@$ECS_HOST" \
+            "DEPLOY_SHA='$DEPLOY_SHA' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+
+          cd /opt/poolweb/POOL-LIVE
+
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git cat-file -e "${DEPLOY_SHA}^{commit}"
+          git merge-base --is-ancestor "$DEPLOY_SHA" origin/main
+          git reset --hard "$DEPLOY_SHA"
+
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm db:migrate
+
+          pm2 reload pool-web --update-env
+          pm2 reload pool-socket --update-env
+          pm2 save
+          REMOTE

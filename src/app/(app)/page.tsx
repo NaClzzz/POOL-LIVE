@@ -70,7 +70,7 @@ export default function HomePage() {
         ref={poolRef}
         className="font-display text-[280px] leading-none tracking-[0.06em] text-[#42a5f5] select-none transition-[transform] duration-200 ease-out"
       >
-        POOL · LIVE
+        POOL
       </h1>
       <div className="mt-24 grid grid-cols-4 gap-4">
         {cards.map(({ href, icon, label }) => (

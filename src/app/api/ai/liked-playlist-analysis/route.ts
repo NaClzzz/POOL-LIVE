@@ -1,9 +1,11 @@
 import { streamText } from 'ai'
+import { desc, eq } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 
+import { likedSongs as likedSongsTable } from '@/db/schema'
 import { BailianConfigurationError, createBailianModel } from '@/lib/ai/bailian'
 import { getCurrentSession } from '@/lib/auth-session'
-import { database } from '@/lib/database'
+import { db } from '@/lib/drizzle'
 
 export const runtime = 'nodejs'
 
@@ -22,10 +24,6 @@ type LikedSongRow = {
   name: string
   artists: string
   album_name: string
-}
-
-type DatabaseLikedSongRow = Omit<LikedSongRow, 'song_id'> & {
-  song_id: string
 }
 
 type LyricResponse = {
@@ -193,19 +191,18 @@ export async function POST(request: Request) {
   }
 
   try {
-    const likedSongsResult = await database.query<DatabaseLikedSongRow>(
-      `
-        SELECT song_id::text AS song_id, name, artists, album_name
-        FROM public.liked_songs
-        WHERE user_id = $1
-        ORDER BY created_at DESC
-      `,
-      [user.id],
-    )
-
-    const likedSongs = likedSongsResult.rows
+    const likedSongs = (await db
+      .select({
+        song_id: likedSongsTable.songId,
+        name: likedSongsTable.name,
+        artists: likedSongsTable.artists,
+        album_name: likedSongsTable.albumName,
+      })
+      .from(likedSongsTable)
+      .where(eq(likedSongsTable.userId, user.id))
+      .orderBy(desc(likedSongsTable.createdAt)))
       .map(song => ({
-        song_id: Number(song.song_id),
+        song_id: song.song_id,
         name: String(song.name ?? '').trim(),
         artists: String(song.artists ?? '').trim(),
         album_name: String(song.album_name ?? '').trim(),

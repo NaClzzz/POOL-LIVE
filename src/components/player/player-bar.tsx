@@ -17,9 +17,8 @@ import { useEffect, useRef, useState } from 'react'
 
 import { QueueDrawer } from '@/components/player/queue-drawer'
 import { RoomPlayerBar } from '@/components/room/room-player-bar'
-import { notifyLikedSongsChanged } from '@/lib/liked-songs/client-events'
+import { useCurrentSongLike } from '@/lib/liked-songs/use-current-song-like'
 import { usePlayerStore } from '@/store/player-store'
-import type { LikedSong } from '@/types/liked-song'
 import type { PlayerSong } from '@/types/player'
 
 type PlayUrlResponse = {
@@ -29,12 +28,16 @@ type PlayUrlResponse = {
   message?: string
 }
 
+// 用于读取喜欢歌曲列表的接口响应。
 type LikesResponse = {
-  songs?: LikedSong[]
-  message?: string
-}
-
-type LikeMutationResponse = {
+  songs?: Array<{
+    song_id: number
+    name: string
+    artists: string
+    album_name: string
+    cover_url: string | null
+    duration_ms: number
+  }>
   message?: string
 }
 
@@ -59,14 +62,17 @@ export function PlayerBar() {
 function PersonalPlayerBar() {
   const audioRef = useRef<HTMLAudioElement>(null)
   const audioRequestIdRef = useRef(0)
-  const currentSongLikeRequestIdRef = useRef(0)
   const [isQueueHydrating, setIsQueueHydrating] = useState(true)
   const [isQueueOpen, setIsQueueOpen] = useState(false)
   const [isQueuePreparing, setIsQueuePreparing] = useState(false)
   const [isSwitchingPlaybackMode, setIsSwitchingPlaybackMode] = useState(false)
-  const [likedSongId, setLikedSongId] = useState<number | null>(null)
-  const [isTogglingCurrentSongLike, setIsTogglingCurrentSongLike] = useState(false)
   const currentSong = usePlayerStore(state => state.currentSong)
+  const {
+    isLiked: isCurrentSongLiked,
+    isToggling: isTogglingCurrentSongLike,
+    error: currentSongLikeError,
+    toggleLike: handleToggleCurrentSongLike,
+  } = useCurrentSongLike(currentSong)
   const queue = usePlayerStore(state => state.queue)
   const currentIndex = usePlayerStore(state => state.currentIndex)
   const queueSource = usePlayerStore(state => state.queueSource)
@@ -161,47 +167,6 @@ function PersonalPlayerBar() {
       audio?.pause()
     }
   }, [])
-
-  useEffect(() => {
-    const songId = currentSong?.id
-    const requestId = currentSongLikeRequestIdRef.current + 1
-    currentSongLikeRequestIdRef.current = requestId
-    let isCurrent = true
-
-    if (!songId) return
-
-    const currentSongId = songId
-
-    async function loadCurrentSongLikeState() {
-      try {
-        const response = await fetch('/api/likes')
-        const data = (await response.json()) as LikesResponse
-
-        if (!response.ok) {
-          throw new Error(data.message || '读取喜欢状态失败')
-        }
-
-        if (isCurrent && currentSongLikeRequestIdRef.current === requestId) {
-          setLikedSongId(
-            (data.songs ?? []).some(song => song.song_id === currentSongId)
-              ? currentSongId
-              : null,
-          )
-        }
-      } catch {
-        // The player stays usable if the visual like state cannot be refreshed.
-        if (isCurrent && currentSongLikeRequestIdRef.current === requestId) {
-          setLikedSongId(null)
-        }
-      }
-    }
-
-    void loadCurrentSongLikeState()
-
-    return () => {
-      isCurrent = false
-    }
-  }, [currentSong?.id])
 
   async function loadAudioForSong(song: PlayerSong, shouldPlay: boolean) {
     const requestId = audioRequestIdRef.current + 1
@@ -315,56 +280,6 @@ function PersonalPlayerBar() {
     setIsQueuePreparing(false)
   }
 
-  async function handleToggleCurrentSongLike() {
-    if (!currentSong || isTogglingCurrentSongLike) return
-
-    const songId = currentSong.id
-    const nextLikedState = !isCurrentSongLiked
-    currentSongLikeRequestIdRef.current += 1
-    setIsTogglingCurrentSongLike(true)
-
-    try {
-      const response = nextLikedState
-        ? await fetch('/api/likes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              song_id: songId,
-              name: currentSong.name,
-              artists: currentSong.artists,
-              album_name: currentSong.albumName,
-              cover_url: currentSong.coverUrl ?? null,
-              duration_ms: currentSong.duration,
-            }),
-          })
-        : await fetch(`/api/likes/${songId}`, { method: 'DELETE' })
-      const data = (await response.json()) as LikeMutationResponse
-
-      if (!response.ok) {
-        throw new Error(data.message || (nextLikedState ? '收藏歌曲失败' : '取消收藏失败'))
-      }
-
-      if (usePlayerStore.getState().currentSong?.id === songId) {
-        setLikedSongId(nextLikedState ? songId : null)
-      }
-      notifyLikedSongsChanged({
-        isLiked: nextLikedState,
-        song: {
-          song_id: songId,
-          name: currentSong.name,
-          artists: currentSong.artists,
-          album_name: currentSong.albumName,
-          cover_url: currentSong.coverUrl ?? null,
-          duration_ms: currentSong.duration,
-        },
-      })
-    } catch (error) {
-      setPlaybackError(error instanceof Error ? error.message : '更新喜欢状态失败，请稍后再试')
-    } finally {
-      setIsTogglingCurrentSongLike(false)
-    }
-  }
-
   async function handlePlaybackModeSwitch() {
     if (isSwitchingPlaybackMode || queue.length === 0) return
 
@@ -417,8 +332,6 @@ function PersonalPlayerBar() {
   const canPlayPrevious = currentIndex >= 0 && queue.length > 0
   const canPlayNext = queue.length > 0
   const isQueueLoading = isQueueHydrating || isQueuePreparing
-  const isCurrentSongLiked = currentSong?.id === likedSongId
-
   return (
     <>
       <QueueDrawer
@@ -470,10 +383,10 @@ function PersonalPlayerBar() {
             {currentSong?.name ?? '暂未播放'}
           </Typography.Text>
           <Typography.Text
-            type={playbackError ? 'danger' : 'secondary'}
+            type={playbackError || currentSongLikeError ? 'danger' : 'secondary'}
             className="!block !truncate !text-xs"
           >
-            {playbackError ?? (currentSong ? currentSong.artists : '选择一首歌开始聆听')}
+            {playbackError ?? currentSongLikeError ?? (currentSong ? currentSong.artists : '选择一首歌开始聆听')}
           </Typography.Text>
         </div>
         <Tooltip title={isCurrentSongLiked ? '取消喜欢' : '喜欢这首歌'}>

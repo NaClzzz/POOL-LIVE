@@ -6,8 +6,9 @@ import {
   LockOutlined,
   SettingOutlined,
   TeamOutlined,
+  UserDeleteOutlined,
 } from '@ant-design/icons'
-import { Alert, Avatar, Button, Card, Form, Input, Tag, Typography } from 'antd'
+import { Alert, Avatar, Button, Card, Form, Input, Popconfirm, Tag, Typography } from 'antd'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
@@ -21,6 +22,7 @@ import { useRoomRealtimeStore } from '@/store/room-realtime-store'
 import type {
   RoomDissolveAcknowledgement,
   RoomDissolvedPayload,
+  RoomKickAcknowledgement,
   RoomPlaybackState,
   RoomRealtimeChatMessage,
   RoomSettingsAcknowledgement,
@@ -65,9 +67,10 @@ type ChatMessageAcknowledgement =
       message: string
     }
 
-// 用于 room:forced-leave 事件标识用户被切换到其他房间。
+// 用于 room:forced-leave 事件标识用户被切换房间或被房主踢出。
 type ForcedLeavePayload = {
   roomCode?: string
+  reason?: 'switched' | 'kicked'
 }
 
 function getPasswordStorageKey(roomCode: string) {
@@ -122,6 +125,7 @@ export default function RoomPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isSavingSettings, setIsSavingSettings] = useState(false)
   const [isDissolvingRoom, setIsDissolvingRoom] = useState(false)
+  const [kickingMemberId, setKickingMemberId] = useState<string | null>(null)
   const [settingsError, setSettingsError] = useState<string | null>(null)
   const [chatError, setChatError] = useState<string | null>(null)
 
@@ -315,6 +319,26 @@ export default function RoomPage() {
     })
   }
 
+  function handleKickMember(memberId: string) {
+    const socket = getSocket()
+    if (!room || !socket.connected || kickingMemberId) {
+      setSocketError('实时服务未连接，暂时不能踢出成员。')
+      return
+    }
+
+    setKickingMemberId(memberId)
+    socket.emit('room:kick-member', { memberId }, (result: RoomKickAcknowledgement) => {
+      setKickingMemberId(null)
+      if (!result.ok) {
+        setSocketError(result.message)
+        return
+      }
+
+      setPresence(roomCode, result.snapshot)
+      setSocketError(null)
+    })
+  }
+
   async function handleSendChatMessage(content: string) {
     const socket = getSocket()
     if (!room || storedRoomCode !== roomCode || !socket.connected) {
@@ -461,9 +485,29 @@ export default function RoomPage() {
               <span className="shrink-0 text-xs font-semibold text-[#34454f]">在线成员</span>
               {members.map(member => (
                 <div key={member.id} className="flex shrink-0 items-center gap-1.5">
-                  <span className="relative block h-7 w-7">
+                  <span className="group relative block h-7 w-7">
                     <Avatar size={28} style={{ backgroundColor: avatarColor(member.id) }} className="!font-semibold !text-xs !text-white">{member.name.slice(0, 1)}</Avatar>
                     {member.isOwner ? <CrownOutlined className="absolute -right-1 -top-1 rounded-full bg-white p-0.5 text-[9px] text-[#1e88e5]" /> : null}
+                    {isCurrentUserHost && member.id !== currentUserId && !member.isOwner ? (
+                      <Popconfirm
+                        title={`确定踢出 ${member.name}？`}
+                        description="对方会立即返回大厅。"
+                        okText="踢出"
+                        cancelText="取消"
+                        okButtonProps={{ danger: true, loading: kickingMemberId === member.id }}
+                        disabled={Boolean(kickingMemberId)}
+                        onConfirm={() => handleKickMember(member.id)}
+                      >
+                        <button
+                          type="button"
+                          disabled={Boolean(kickingMemberId)}
+                          aria-label={`踢出 ${member.name}`}
+                          className="absolute inset-0 z-10 grid place-items-center rounded-full bg-[#d4380d]/85 text-[10px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100 disabled:cursor-not-allowed"
+                        >
+                          <span className="inline-flex items-center gap-0.5"><UserDeleteOutlined />踢出</span>
+                        </button>
+                      </Popconfirm>
+                    ) : null}
                   </span>
                   <span className="max-w-20 truncate text-xs text-[#52616a]">{member.name}</span>
                 </div>

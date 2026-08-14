@@ -1,18 +1,11 @@
+import { desc, eq } from 'drizzle-orm'
+
+import { likedSongs } from '@/db/schema'
 import { getCurrentSession } from '@/lib/auth-session'
-import { database } from '@/lib/database'
+import { db } from '@/lib/drizzle'
 import { LikedSongValidationError, parseLikedSongInput } from '@/lib/liked-songs/validation'
 
 export const runtime = 'nodejs'
-
-type LikedSongRow = {
-  song_id: string
-  name: string
-  artists: string
-  album_name: string
-  cover_url: string | null
-  duration_ms: number
-  created_at: Date
-}
 
 export async function GET() {
   const session = await getCurrentSession()
@@ -22,35 +15,24 @@ export async function GET() {
   }
 
   try {
-    const result = await database.query<LikedSongRow>(
-      `
-        SELECT
-          song_id::text AS song_id,
-          name,
-          artists,
-          album_name,
-          cover_url,
-          duration_ms,
-          created_at
-        FROM public.liked_songs
-        WHERE user_id = $1
-        ORDER BY created_at DESC
-      `,
-      [session.user.id],
-    )
-
-    const songs = result.rows.map(song => ({
-      song_id: Number(song.song_id),
-      name: song.name,
-      artists: song.artists,
-      album_name: song.album_name,
-      cover_url: song.cover_url,
-      duration_ms: song.duration_ms,
-      created_at: song.created_at.toISOString(),
-    }))
+    const songs = await db
+      .select()
+      .from(likedSongs)
+      .where(eq(likedSongs.userId, session.user.id))
+      .orderBy(desc(likedSongs.createdAt))
 
     return Response.json(
-      { songs },
+      {
+        songs: songs.map(song => ({
+          song_id: song.songId,
+          name: song.name,
+          artists: song.artists,
+          album_name: song.albumName,
+          cover_url: song.coverUrl,
+          duration_ms: song.durationMs,
+          created_at: song.createdAt,
+        })),
+      },
       { headers: { 'Cache-Control': 'private, no-store' } },
     )
   } catch {
@@ -67,32 +49,21 @@ export async function POST(request: Request) {
 
   try {
     const song = parseLikedSongInput(await request.json())
-    const result = await database.query(
-      `
-        INSERT INTO public.liked_songs (
-          user_id,
-          song_id,
-          name,
-          artists,
-          album_name,
-          cover_url,
-          duration_ms
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (user_id, song_id) DO NOTHING
-      `,
-      [
-        session.user.id,
-        song.song_id,
-        song.name,
-        song.artists,
-        song.album_name,
-        song.cover_url,
-        song.duration_ms,
-      ],
-    )
+    const createdRows = await db
+      .insert(likedSongs)
+      .values({
+        userId: session.user.id,
+        songId: song.song_id,
+        name: song.name,
+        artists: song.artists,
+        albumName: song.album_name,
+        coverUrl: song.cover_url,
+        durationMs: song.duration_ms,
+      })
+      .onConflictDoNothing({ target: [likedSongs.userId, likedSongs.songId] })
+      .returning({ songId: likedSongs.songId })
 
-    const created = result.rowCount === 1
+    const created = createdRows.length === 1
 
     return Response.json(
       {
@@ -122,15 +93,12 @@ export async function DELETE() {
   }
 
   try {
-    const result = await database.query(
-      `
-        DELETE FROM public.liked_songs
-        WHERE user_id = $1
-      `,
-      [session.user.id],
-    )
+    const deletedRows = await db
+      .delete(likedSongs)
+      .where(eq(likedSongs.userId, session.user.id))
+      .returning({ songId: likedSongs.songId })
 
-    return Response.json({ deletedCount: result.rowCount ?? 0 })
+    return Response.json({ deletedCount: deletedRows.length })
   } catch {
     return Response.json({ message: '清空喜欢的音乐失败，请稍后再试。' }, { status: 500 })
   }

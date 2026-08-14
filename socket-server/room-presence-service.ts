@@ -129,6 +129,9 @@ export class RoomPlaylistError extends Error {}
 
 export class RoomPlaybackError extends Error {}
 
+// 用于区分房主踢出成员时的权限和成员状态校验失败。
+export class RoomMemberError extends Error {}
+
 // 用于区分房主配置校验失败与其他 Socket 房间业务错误。
 export class RoomSettingsError extends Error {}
 
@@ -552,6 +555,72 @@ export class RoomPresenceService {
       }
 
       return this.toSnapshot(nextRoom, currentMembers)
+    }))
+  }
+
+  // 由房主将目标成员从房间、上台队列和在线状态中原子移除。
+  async kickMember({
+    roomCode,
+    requesterUserId,
+    requesterSocketId,
+    targetUserId,
+  }: {
+    roomCode: string
+    requesterUserId: string
+    requesterSocketId: string
+    targetUserId: string
+  }): Promise<RoomSocketSnapshot> {
+    if (!targetUserId.trim()) throw new RoomMemberError('请选择要踢出的成员。')
+
+    return this.withUserLock(targetUserId, () => this.withRoomLock(roomCode, async () => {
+      const onlineMembers = this.onlineRooms.get(roomCode)
+      const requester = onlineMembers?.get(requesterUserId)
+
+      if (!onlineMembers || !requester?.socketIds.has(requesterSocketId)) {
+        throw new RoomMemberError('请先加入房间后再管理成员。')
+      }
+
+      const room = await this.findRoom(roomCode)
+      if (!room) throw new RoomMemberError('房间不存在或已被清理。')
+      if (room.ownerId !== requesterUserId) throw new RoomMemberError('只有房主可以踢出成员。')
+      if (targetUserId === requesterUserId) throw new RoomMemberError('房主不能踢出自己。')
+      if (!onlineMembers.has(targetUserId)) throw new RoomMemberError('该成员已不在房间内。')
+
+      const removedStageIndex = this.removeStageMember(roomCode, targetUserId)
+      onlineMembers.delete(targetUserId)
+      this.removeSkipVote(roomCode, targetUserId)
+      this.userRoomCodes.delete(targetUserId)
+
+      const now = new Date()
+      await this.db.transaction(async tx => {
+        await tx
+          .update(roomMembers)
+          .set({ leftAt: now })
+          .where(
+            and(
+              eq(roomMembers.roomId, room.id),
+              eq(roomMembers.userId, targetUserId),
+              isNull(roomMembers.leftAt),
+            ),
+          )
+        await tx
+          .update(rooms)
+          .set({
+            currentMemberCount: onlineMembers.size,
+            lastActiveAt: now,
+            emptyExpiresAt: new Date(now.getTime() + EMPTY_ROOM_TTL_MS),
+            updatedAt: now,
+          })
+          .where(eq(rooms.id, room.id))
+      })
+
+      if (removedStageIndex >= 0) {
+        await this.advancePlaybackLocked(room, onlineMembers, removedStageIndex - 1)
+      } else {
+        this.onPlaybackChanged?.(roomCode, await this.getRoomPlayback(room))
+      }
+
+      return this.toSnapshot(room, onlineMembers)
     }))
   }
 

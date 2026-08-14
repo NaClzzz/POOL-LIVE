@@ -1,5 +1,6 @@
+import { likedSongs } from '@/db/schema'
 import { getCurrentSession } from '@/lib/auth-session'
-import { database } from '@/lib/database'
+import { db } from '@/lib/drizzle'
 import { LikedSongValidationError, parseLikedSongInput } from '@/lib/liked-songs/validation'
 import type { LikedSongInput } from '@/types/liked-song'
 
@@ -9,10 +10,6 @@ const MAX_IMPORT_SONGS = 500
 
 type ImportLikedSongsBody = {
   songs?: unknown
-}
-
-type InsertedSongRow = {
-  song_id: string
 }
 
 function parseImportBody(body: unknown) {
@@ -60,42 +57,24 @@ export async function POST(request: Request) {
     return Response.json({ message }, { status: 400 })
   }
 
-  const values: Array<string | number | null> = [session.user.id]
-  const rows = songs.map((song, index) => {
-    const start = index * 6 + 2
-
-    values.push(
-      song.song_id,
-      song.name,
-      song.artists,
-      song.album_name,
-      song.cover_url,
-      song.duration_ms,
-    )
-
-    return `($1, $${start}, $${start + 1}, $${start + 2}, $${start + 3}, $${start + 4}, $${start + 5})`
-  })
-
   try {
-    const result = await database.query<InsertedSongRow>(
-      `
-        INSERT INTO public.liked_songs (
-          user_id,
-          song_id,
-          name,
-          artists,
-          album_name,
-          cover_url,
-          duration_ms
-        )
-        VALUES ${rows.join(', ')}
-        ON CONFLICT (user_id, song_id) DO NOTHING
-        RETURNING song_id::text AS song_id
-      `,
-      values,
-    )
+    const insertedRows = await db
+      .insert(likedSongs)
+      .values(
+        songs.map(song => ({
+          userId: session.user.id,
+          songId: song.song_id,
+          name: song.name,
+          artists: song.artists,
+          albumName: song.album_name,
+          coverUrl: song.cover_url,
+          durationMs: song.duration_ms,
+        })),
+      )
+      .onConflictDoNothing({ target: [likedSongs.userId, likedSongs.songId] })
+      .returning({ songId: likedSongs.songId })
 
-    const addedSongIds = result.rows.map(row => Number(row.song_id))
+    const addedSongIds = insertedRows.map(row => row.songId)
 
     return Response.json(
       {

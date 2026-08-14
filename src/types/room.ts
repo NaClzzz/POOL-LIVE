@@ -75,6 +75,17 @@ export type RoomDissolveAcknowledgement =
       message: string
     }
 
+// 用于房主踢出在线成员后返回最新房间快照或可展示的失败原因。
+export type RoomKickAcknowledgement =
+  | {
+      ok: true
+      snapshot: RoomSocketSnapshot
+    }
+  | {
+      ok: false
+      message: string
+    }
+
 // 用于通知房间内所有标签页当前房间已被房主解散。
 export type RoomDissolvedPayload = {
   roomCode: string

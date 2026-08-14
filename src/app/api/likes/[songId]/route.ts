@@ -1,5 +1,8 @@
+import { and, eq } from 'drizzle-orm'
+
+import { likedSongs } from '@/db/schema'
 import { getCurrentSession } from '@/lib/auth-session'
-import { database } from '@/lib/database'
+import { db } from '@/lib/drizzle'
 
 export const runtime = 'nodejs'
 
@@ -22,15 +25,12 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
   }
 
   try {
-    const result = await database.query(
-      `
-        DELETE FROM public.liked_songs
-        WHERE user_id = $1 AND song_id = $2
-      `,
-      [session.user.id, songId],
-    )
+    const deletedRows = await db
+      .delete(likedSongs)
+      .where(and(eq(likedSongs.userId, session.user.id), eq(likedSongs.songId, songId)))
+      .returning({ songId: likedSongs.songId })
 
-    if (result.rowCount === 0) {
+    if (deletedRows.length === 0) {
       return Response.json({ message: '这首歌不在你的喜欢列表中。' }, { status: 404 })
     }
 

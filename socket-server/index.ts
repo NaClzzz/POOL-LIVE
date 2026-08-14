@@ -6,6 +6,7 @@ import { Server, type Socket } from 'socket.io'
 
 import type {
   RoomDissolveAcknowledgement,
+  RoomKickAcknowledgement,
   RoomPlaybackState,
   RoomRealtimeChatMessage,
   RoomSettingsAcknowledgement,
@@ -61,6 +62,11 @@ type ChatMessageAcknowledgement =
 
 // 用于 stage:leave 事件接收目标成员；省略时代表用户让自己下台。
 type StageLeavePayload = {
+  memberId?: unknown
+}
+
+// 用于 room:kick-member 事件接收房主选择的目标成员 ID。
+type RoomKickPayload = {
   memberId?: unknown
 }
 
@@ -131,6 +137,7 @@ async function startSocketServer() {
     {
       RoomChatError,
       RoomJoinError,
+      RoomMemberError,
       RoomPlaylistError,
       RoomPlaybackError,
       RoomPresenceService,
@@ -482,6 +489,54 @@ async function startSocketServer() {
           const message = error instanceof RoomSettingsError ? error.message : '解散房间失败，请稍后重试。'
           if (!(error instanceof RoomSettingsError)) {
             console.error(`[Socket] 用户 ${user.id} 解散房间失败。`, error)
+          }
+          acknowledge?.({ ok: false, message })
+        }
+      },
+    )
+
+    socket.on(
+      'room:kick-member',
+      async (
+        payload: RoomKickPayload,
+        acknowledge?: (result: RoomKickAcknowledgement) => void,
+      ) => {
+        const roomCode = socket.data.roomCode
+        const targetUserId = typeof payload?.memberId === 'string' ? payload.memberId.trim() : ''
+
+        if (typeof roomCode !== 'string') {
+          acknowledge?.({ ok: false, message: '请先加入房间后再管理成员。' })
+          return
+        }
+        if (!targetUserId) {
+          acknowledge?.({ ok: false, message: '请选择要踢出的成员。' })
+          return
+        }
+
+        try {
+          const snapshot = await roomPresence.kickMember({
+            roomCode,
+            requesterUserId: user.id,
+            requesterSocketId: socket.id,
+            targetUserId,
+          })
+          const kickedSockets = await io.in(`user:${targetUserId}`).fetchSockets()
+
+          acknowledge?.({ ok: true, snapshot })
+          io.to(`room:${roomCode}`).emit('room:presence', snapshot)
+
+          for (const kickedSocket of kickedSockets) {
+            if (kickedSocket.data.roomCode !== roomCode) continue
+
+            await kickedSocket.leave(`room:${roomCode}`)
+            delete kickedSocket.data.roomCode
+            kickedSocket.emit('room:forced-leave', { roomCode, reason: 'kicked' })
+          }
+        } catch (error) {
+          const message = error instanceof RoomMemberError ? error.message : '踢出成员失败，请稍后重试。'
+
+          if (!(error instanceof RoomMemberError)) {
+            console.error(`[Socket] 用户 ${user.id} 踢出房间成员失败。`, error)
           }
           acknowledge?.({ ok: false, message })
         }

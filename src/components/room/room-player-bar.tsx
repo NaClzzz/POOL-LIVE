@@ -2,16 +2,19 @@
 
 import {
   DislikeOutlined,
+  HeartFilled,
+  HeartOutlined,
   SoundOutlined,
   StepForwardOutlined,
   UnorderedListOutlined,
 } from '@ant-design/icons'
-import { Avatar, Layout, Slider, Tooltip, Typography } from 'antd'
+import { Avatar, Button, Layout, Slider, Tooltip, Typography } from 'antd'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 
 import { RoomQueueDrawer } from '@/components/room/room-queue-drawer'
 import { useSession } from '@/lib/auth-client'
+import { useCurrentSongLike } from '@/lib/liked-songs/use-current-song-like'
 import { getRoomPlaybackPositionMs } from '@/lib/room/playback'
 import { getSocket } from '@/lib/socket-client'
 import { usePlayerStore } from '@/store/player-store'
@@ -141,6 +144,12 @@ export function RoomPlayerBar() {
   const playbackSongId = playback?.song?.id ?? null
   const playbackStatus = playback?.status ?? 'idle'
   const currentSong = canUseRoom ? playback?.song ?? null : null
+  const {
+    isLiked: isCurrentSongLiked,
+    isToggling: isTogglingCurrentSongLike,
+    error: currentSongLikeError,
+    toggleLike: handleToggleCurrentSongLike,
+  } = useCurrentSongLike(currentSong)
   const isCurrentPlayer = Boolean(
     session?.user.id && playback?.status === 'playing' && playback.activeMemberId === session.user.id,
   )
@@ -396,10 +405,24 @@ export function RoomPlayerBar() {
             <Typography.Text className="!block !truncate !font-medium">
               {currentSong?.name ?? '等待上台成员准备歌曲'}
             </Typography.Text>
-            <Typography.Text type={audioError ? 'danger' : 'secondary'} className="!block !truncate !text-xs">
-              {audioError ?? currentSong?.artists ?? '上台后会按顺序自动轮播'}
+            <Typography.Text type={audioError || currentSongLikeError ? 'danger' : 'secondary'} className="!block !truncate !text-xs">
+              {audioError ?? currentSongLikeError ?? currentSong?.artists ?? '上台后会按顺序自动轮播'}
             </Typography.Text>
           </div>
+          <Tooltip title={isCurrentSongLiked ? '取消喜欢' : '喜欢这首歌'}>
+            <Button
+              className="shrink-0"
+              type="text"
+              shape="circle"
+              loading={isTogglingCurrentSongLike}
+              disabled={!currentSong || isTogglingCurrentSongLike}
+              onClick={() => void handleToggleCurrentSongLike()}
+              aria-label={isCurrentSongLiked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'}
+              icon={
+                isCurrentSongLiked ? <HeartFilled className="!text-[#42a5f5]" /> : <HeartOutlined />
+              }
+            />
+          </Tooltip>
         </div>
 
         <div className="absolute left-1/2 top-1/2 hidden w-[min(560px,46vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-1 md:flex">

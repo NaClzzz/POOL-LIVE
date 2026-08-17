@@ -2,7 +2,7 @@
 
 import { SendOutlined } from '@ant-design/icons'
 import { Alert, Input } from 'antd'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { RoomRealtimeChatMessage } from '@/types/room'
 
@@ -27,6 +27,31 @@ function formatMessageTime(createdAt: string) {
 export function RoomChatPanel({ messages, currentUserId, error, onSend }: RoomChatPanelProps) {
   const [content, setContent] = useState('')
   const [isSending, setIsSending] = useState(false)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const shouldAutoScrollRef = useRef(true)
+  const previousMessageCountRef = useRef(0)
+
+  useEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container || !shouldAutoScrollRef.current) {
+      previousMessageCountRef.current = messages.length
+      return
+    }
+
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: previousMessageCountRef.current === 0 ? 'auto' : 'smooth',
+    })
+    previousMessageCountRef.current = messages.length
+  }, [messages])
+
+  function handleMessagesScroll() {
+    const container = messagesContainerRef.current
+    if (!container) return
+
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    shouldAutoScrollRef.current = distanceFromBottom <= 48
+  }
 
   async function handleSend() {
     const nextContent = content.trim()
@@ -54,7 +79,11 @@ export function RoomChatPanel({ messages, currentUserId, error, onSend }: RoomCh
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
+      <div
+        ref={messagesContainerRef}
+        onScroll={handleMessagesScroll}
+        className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5"
+      >
         {messages.length === 0 ? (
           <p className="m-0 text-center text-sm text-[#71808a]">还没有消息，说点什么吧。</p>
         ) : null}

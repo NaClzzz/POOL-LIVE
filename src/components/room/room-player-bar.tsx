@@ -57,8 +57,8 @@ function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === 'AbortError'
 }
 
-function waitForAudioMetadata(audio: HTMLAudioElement, signal: AbortSignal) {
-  if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) return Promise.resolve()
+function waitForAudioReady(audio: HTMLAudioElement, signal: AbortSignal) {
+  if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return Promise.resolve()
 
   return new Promise<void>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
@@ -68,7 +68,7 @@ function waitForAudioMetadata(audio: HTMLAudioElement, signal: AbortSignal) {
 
     const cleanup = () => {
       window.clearTimeout(timeout)
-      audio.removeEventListener('loadedmetadata', handleLoaded)
+      audio.removeEventListener('canplay', handleLoaded)
       audio.removeEventListener('error', handleError)
       signal.removeEventListener('abort', handleAbort)
     }
@@ -88,7 +88,7 @@ function waitForAudioMetadata(audio: HTMLAudioElement, signal: AbortSignal) {
       reject(new DOMException('Room audio loading was cancelled.', 'AbortError'))
     }
 
-    audio.addEventListener('loadedmetadata', handleLoaded, { once: true })
+    audio.addEventListener('canplay', handleLoaded, { once: true })
     audio.addEventListener('error', handleError, { once: true })
     signal.addEventListener('abort', handleAbort, { once: true })
   })
@@ -215,7 +215,7 @@ export function RoomPlayerBar() {
         currentAudio.pause()
         currentAudio.src = url
         currentAudio.load()
-        await waitForAudioMetadata(currentAudio, abortController.signal)
+        await waitForAudioReady(currentAudio, abortController.signal)
         if (abortController.signal.aborted || audioRequestIdRef.current !== requestId) return
 
         const latestPlayback = useRoomRealtimeStore.getState().playback

@@ -29,8 +29,8 @@ import type {
 
 const EMPTY_ROOM_TTL_MS = 30 * 60 * 1000
 const RECENT_MESSAGE_LIMIT = 50
-// 新节目开始前为客户端获取音源和加载媒体元数据预留的时间（毫秒）。
-const ROOM_PLAYBACK_START_LEAD_MS = 2_000
+// 新节目开始前为客户端获取音源并准备可播放数据预留的时间（毫秒）。
+const ROOM_PLAYBACK_START_LEAD_MS = 3_000
 
 // 用于校验并规范客户端提交的歌曲元数据，避免把任意对象写入数据库。
 function normalizePlaylistSong(value: unknown) {
@@ -1645,20 +1645,27 @@ export class RoomPresenceService {
 
   // 将同一房间的修改排队，避免并发加入时绕过人数上限。
   private async withRoomLock<T>(roomCode: string, operation: () => Promise<T>) {
+    // 取队尾
     const previous = this.roomLocks.get(roomCode) ?? Promise.resolve()
     let releaseCurrent: () => void = () => {}
+    // 把 current 的 resolve 给 releaseCurrent
     const current = new Promise<void>(resolve => {
       releaseCurrent = resolve
     })
+    // 队尾插入 current
     const queued = previous.then(() => current)
 
+    // 设置新队尾
     this.roomLocks.set(roomCode, queued)
+    // 等待之前的队尾
     await previous
 
     try {
       return await operation()
     } finally {
+      // current 完成
       releaseCurrent()
+      // 如果自己就是队尾，完成后删除队伍
       if (this.roomLocks.get(roomCode) === queued) this.roomLocks.delete(roomCode)
     }
   }

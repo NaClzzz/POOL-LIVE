@@ -73,25 +73,13 @@ export const rooms = pgTable(
   table => [
     index('rooms_last_active_index').on(table.lastActiveAt),
 
-    check(
-      'rooms_name_length_check',
-      sql`char_length(trim(${table.name})) between 2 and 20`,
-    ),
+    check('rooms_name_length_check', sql`char_length(trim(${table.name})) between 2 and 20`),
 
-    check(
-      'rooms_tag_length_check',
-      sql`char_length(trim(${table.tag})) between 2 and 12`,
-    ),
+    check('rooms_tag_length_check', sql`char_length(trim(${table.tag})) between 2 and 12`),
 
-    check(
-      'rooms_max_members_check',
-      sql`${table.maxMembers} between 2 and 50`,
-    ),
+    check('rooms_max_members_check', sql`${table.maxMembers} between 2 and 50`),
 
-    check(
-      'rooms_max_stage_members_check',
-      sql`${table.maxStageMembers} between 1 and 30`,
-    ),
+    check('rooms_max_stage_members_check', sql`${table.maxStageMembers} between 1 and 30`),
 
     check(
       'rooms_current_member_count_check',
@@ -131,11 +119,7 @@ export const roomMembers = pgTable(
       name: 'room_members_pkey',
     }),
 
-    index('room_members_room_left_joined_index').on(
-      table.roomId,
-      table.leftAt,
-      table.joinedAt,
-    ),
+    index('room_members_room_left_joined_index').on(table.roomId, table.leftAt, table.joinedAt),
 
     uniqueIndex('room_members_one_active_room_per_user')
       .on(table.userId)
@@ -167,10 +151,7 @@ export const roomMessages = pgTable(
       .defaultNow(),
   },
   table => [
-    index('room_messages_room_created_index').on(
-      table.roomId,
-      table.createdAt,
-    ),
+    index('room_messages_room_created_index').on(table.roomId, table.createdAt),
 
     check(
       'room_messages_content_length_check',
@@ -194,12 +175,8 @@ export const userRoomPlaylistItems = pgTable(
     coverUrl: text('cover_url'),
     durationMs: integer('duration_ms').notNull().default(0),
     position: integer('position').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   table => [
     uniqueIndex('user_room_playlist_items_user_song_unique').on(table.userId, table.songId),
@@ -232,9 +209,7 @@ export const roomPlaybackStates = pgTable(
     startedAt: timestamp('started_at', { withTimezone: true, mode: 'date' }),
     startOffsetMs: integer('start_offset_ms').notNull().default(0),
     version: integer('version').notNull().default(0),
-    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   table => [
     check('room_playback_states_status_check', sql`${table.status} in ('idle', 'playing')`),

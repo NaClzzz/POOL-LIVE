@@ -101,7 +101,7 @@ export function RoomChatPanel({ messages, currentUserId, error, onSend }: RoomCh
                 <span>{formatMessageTime(message.createdAt)}</span>
               </div>
               <p
-                className={`m-0 inline-block max-w-[260px] rounded-[8px] px-3 py-2 text-left text-sm leading-6 ${
+                className={`m-0 inline-block max-w-[260px] whitespace-pre-wrap break-words rounded-[8px] px-3 py-2 text-left text-sm leading-6 ${
                   isMine ? 'bg-[#eaf6ff] text-[#1e88e5]' : 'bg-[#f4f6f7] text-[#34454f]'
                 }`}
               >

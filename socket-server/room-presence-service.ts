@@ -30,7 +30,7 @@ import type {
 const EMPTY_ROOM_TTL_MS = 30 * 60 * 1000
 const RECENT_MESSAGE_LIMIT = 50
 // 新节目开始前为客户端获取音源并准备可播放数据预留的时间（毫秒）。
-const ROOM_PLAYBACK_START_LEAD_MS = 3_000
+const ROOM_PLAYBACK_START_LEAD_MS = 4_000
 
 // 用于校验并规范客户端提交的歌曲元数据，避免把任意对象写入数据库。
 function normalizePlaylistSong(value: unknown) {

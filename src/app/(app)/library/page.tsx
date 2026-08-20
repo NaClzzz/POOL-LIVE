@@ -6,6 +6,7 @@ import {
   ImportOutlined,
   PlayCircleFilled,
   RobotOutlined,
+  StepForwardOutlined,
   StopOutlined,
 } from '@ant-design/icons'
 import { Alert, Avatar, Button, Card, Input, List, Popconfirm, Space, Spin, Typography } from 'antd'
@@ -90,6 +91,17 @@ function makeLikedSong(song: PlaylistSong): LikedSongInput {
   }
 }
 
+function toPlayerSong(song: LikedSong) {
+  return {
+    id: song.song_id,
+    name: song.name,
+    artists: song.artists,
+    albumName: song.album_name,
+    coverUrl: song.cover_url ?? undefined,
+    duration: song.duration_ms,
+  }
+}
+
 export default function LibraryPage() {
   const [likedSongs, setLikedSongs] = useState<LikedSong[]>([])
   const [playlistInput, setPlaylistInput] = useState('')
@@ -106,7 +118,9 @@ export default function LibraryPage() {
   const [isGeneratingAnalysis, setIsGeneratingAnalysis] = useState(false)
   const analysisAbortRef = useRef<AbortController | null>(null)
   const startQueue = usePlayerStore(state => state.startQueue)
+  const addSongToNext = usePlayerStore(state => state.addSongToNext)
   const playbackMode = usePlayerStore(state => state.playbackMode)
+  const currentSong = usePlayerStore(state => state.currentSong)
 
   useEffect(() => {
     let isCurrent = true
@@ -251,14 +265,7 @@ export default function LibraryPage() {
         throw new Error('这首歌暂时无法播放，可能受版权或会员限制。')
       }
 
-      const queue = likedSongs.map(queueSong => ({
-        id: queueSong.song_id,
-        name: queueSong.name,
-        artists: queueSong.artists,
-        albumName: queueSong.album_name,
-        coverUrl: queueSong.cover_url ?? undefined,
-        duration: queueSong.duration_ms,
-      }))
+      const queue = likedSongs.map(toPlayerSong)
       const queueIndex = queue.findIndex(queueSong => queueSong.id === song.song_id)
 
       startQueue(queue, queueIndex, audioUrl, 'liked', playbackMode)
@@ -266,6 +273,18 @@ export default function LibraryPage() {
       setActionError(error instanceof Error ? error.message : '歌曲播放失败，请稍后再试。')
     } finally {
       setPlayingSongId(null)
+    }
+  }
+
+  function handleAddToNext(song: LikedSong) {
+    setActionError('')
+
+    if (!addSongToNext(toPlayerSong(song))) {
+      setActionError(
+        currentSong?.id === song.song_id
+          ? '这首歌正在播放，不能重复添加到下一首。'
+          : '请先播放一首歌曲，再添加下一首。',
+      )
     }
   }
 
@@ -497,6 +516,22 @@ export default function LibraryPage() {
                     disabled={playingSongId !== null}
                     onClick={() => void handlePlay(song)}
                     icon={<PlayCircleFilled className="!text-[#42a5f5]" />}
+                  />,
+                  <Button
+                    key="play-next"
+                    type="text"
+                    shape="circle"
+                    aria-label={`添加 ${song.name} 到下一首播放`}
+                    title={
+                      currentSong?.id === song.song_id
+                        ? '正在播放的歌曲不能重复添加'
+                        : currentSong
+                          ? '添加到下一首播放'
+                          : '请先播放一首歌曲'
+                    }
+                    disabled={!currentSong || currentSong.id === song.song_id}
+                    onClick={() => handleAddToNext(song)}
+                    icon={<StepForwardOutlined className="!text-[#42a5f5]" />}
                   />,
                   <Button
                     key="remove"

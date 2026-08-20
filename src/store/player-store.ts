@@ -30,6 +30,8 @@ type PlayerStore = {
   selectQueueSong: (index: number) => PlayerSong | null
   nextSong: () => PlayerSong | null
   previousSong: () => PlayerSong | null
+  // 用于将歌曲安排为当前个人播放器的下一首；没有当前歌曲时返回 false。
+  addSongToNext: (song: PlayerSong) => boolean
   removeFromQueue: (index: number) => void
   moveQueueSong: (fromIndex: number, toIndex: number) => PlayerSong | null
   setLocalPlaybackMode: (playbackMode: PlaybackMode) => void
@@ -64,6 +66,22 @@ function moveSong(queue: PlayerSong[], fromIndex: number, toIndex: number) {
 
   nextQueue.splice(toIndex, 0, song)
   return nextQueue
+}
+
+function placeSongAfterCurrent(queue: PlayerSong[], currentSongId: number, song: PlayerSong) {
+  const queueWithoutSong = queue.filter(queueSong => queueSong.id !== song.id)
+  const currentIndex = getSongIndex(queueWithoutSong, currentSongId)
+
+  if (currentIndex < 0) return null
+
+  // 队列在末尾循环，当前歌曲位于末尾时把下一首放到数组开头。
+  const insertIndex = currentIndex === queueWithoutSong.length - 1 ? 0 : currentIndex + 1
+
+  return [
+    ...queueWithoutSong.slice(0, insertIndex),
+    song,
+    ...queueWithoutSong.slice(insertIndex),
+  ]
 }
 
 function shuffleSongs(queue: PlayerSong[]) {
@@ -170,6 +188,28 @@ export const usePlayerStore = create<PlayerStore>()(
 
         const previousIndex = (currentIndex - 1 + queue.length) % queue.length
         return get().selectQueueSong(previousIndex)
+      },
+
+      addSongToNext: song => {
+        const { baseQueueSnapshot, currentSong, queue } = get()
+        if (!currentSong) return false
+
+        const nextQueue = placeSongAfterCurrent(queue, currentSong.id, song)
+        if (!nextQueue) return false
+
+        // 搜索队列中新增的歌曲也需要进入本地顺序快照，切换播放模式时才不会丢失。
+        const baseQueue = baseQueueSnapshot.length > 0 ? baseQueueSnapshot : queue
+        const nextBaseQueue = baseQueue.some(queueSong => queueSong.id === song.id)
+          ? baseQueue
+          : (placeSongAfterCurrent(baseQueue, currentSong.id, song) ?? [...baseQueue, song])
+
+        set({
+          queue: nextQueue,
+          baseQueueSnapshot: nextBaseQueue,
+          currentIndex: getSongIndex(nextQueue, currentSong.id),
+        })
+
+        return true
       },
 
       removeFromQueue: index => {

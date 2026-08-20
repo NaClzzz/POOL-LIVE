@@ -374,7 +374,7 @@ function PersonalPlayerBar() {
           shape="square"
           size={56}
           src={currentSong?.coverUrl}
-          className="!shrink-0 !bg-[#42a5f5]"
+          className="!shrink-0 !bg-[#eef1f3] !text-[#71808a]"
         >
           {currentSong?.name.slice(0, 1) ?? '♪'}
         </Avatar>

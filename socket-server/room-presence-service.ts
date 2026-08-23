@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, isNull, lte, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { randomBytes } from 'node:crypto'
 
@@ -324,6 +324,62 @@ export class RoomPresenceService {
           updatedAt: now,
         })
     })
+  }
+
+  // 用于物理删除已过期的空房及其通过外键级联关联的成员、聊天和播放状态数据。
+  async cleanupExpiredRooms(): Promise<number> {
+    const now = new Date()
+    const expiredRooms = await this.db
+      .select({ id: rooms.id, code: rooms.code })
+      .from(rooms)
+      .where(and(eq(rooms.currentMemberCount, 0), lte(rooms.emptyExpiresAt, now)))
+
+    let deletedCount = 0
+
+    for (const expiredRoom of expiredRooms) {
+      const deleted = await this.withRoomLock(expiredRoom.code, async () => {
+        const room = await this.findRoom(expiredRoom.code)
+        const cleanupTime = new Date()
+        const onlineMembers = this.onlineRooms.get(expiredRoom.code)
+
+        // 首次查询后可能已有用户加入，必须在房间锁内再次确认删除条件。
+        if (
+          !room ||
+          room.currentMemberCount !== 0 ||
+          room.emptyExpiresAt > cleanupTime ||
+          (onlineMembers && onlineMembers.size > 0)
+        ) {
+          return false
+        }
+
+        const deletedRooms = await this.db
+          .delete(rooms)
+          .where(
+            and(
+              eq(rooms.id, room.id),
+              eq(rooms.currentMemberCount, 0),
+              lte(rooms.emptyExpiresAt, cleanupTime),
+            ),
+          )
+          .returning({ id: rooms.id })
+
+        if (deletedRooms.length === 0) return false
+
+        this.clearPlaybackTimer(room.code)
+        this.stageQueues.delete(room.code)
+        this.skipVotes.delete(room.code)
+        this.onlineRooms.delete(room.code)
+        for (const [userId, activeRoomCode] of this.userRoomCodes) {
+          if (activeRoomCode === room.code) this.userRoomCodes.delete(userId)
+        }
+
+        return true
+      })
+
+      if (deleted) deletedCount += 1
+    }
+
+    return deletedCount
   }
 
   async joinRoom({

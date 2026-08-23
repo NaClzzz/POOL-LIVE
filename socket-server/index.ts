@@ -19,6 +19,8 @@ import type {
 config({ path: '.env.local' })
 
 const port = Number(process.env.SOCKET_PORT ?? 3001)
+const DAILY_ROOM_CLEANUP_HOUR = 4
+const DAILY_ROOM_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 // 用于 room:join 事件接收浏览器提交的房间号和可选密码。
 type JoinRoomPayload = {
@@ -130,6 +132,41 @@ function getPayloadPassword(value: unknown) {
   return typeof value === 'string' ? value : null
 }
 
+// 用于计算当前系统时区中下一次凌晨四点的等待时间。
+function getDelayUntilNextRoomCleanup(now = new Date()) {
+  const nextCleanupAt = new Date(now)
+  nextCleanupAt.setHours(DAILY_ROOM_CLEANUP_HOUR, 0, 0, 0)
+
+  if (nextCleanupAt <= now) nextCleanupAt.setDate(nextCleanupAt.getDate() + 1)
+
+  return { delayMs: nextCleanupAt.getTime() - now.getTime(), nextCleanupAt }
+}
+
+// 用于在 Socket 进程内每天凌晨四点执行一次过期空房清理。
+function scheduleDailyRoomCleanup(cleanupExpiredRooms: () => Promise<number>) {
+  const runCleanup = async () => {
+    try {
+      const deletedCount = await cleanupExpiredRooms()
+      if (deletedCount > 0) console.log(`[Socket] 已清理 ${deletedCount} 个过期空房。`)
+    } catch (error) {
+      console.error('[Socket] 清理过期空房失败。', error)
+    }
+  }
+
+  const { delayMs, nextCleanupAt } = getDelayUntilNextRoomCleanup()
+  const initialTimer = setTimeout(() => {
+    void runCleanup()
+
+    const dailyTimer = setInterval(() => {
+      void runCleanup()
+    }, DAILY_ROOM_CLEANUP_INTERVAL_MS)
+    dailyTimer.unref()
+  }, delayMs)
+
+  initialTimer.unref()
+  console.log(`[Socket] 过期空房清理已计划于 ${nextCleanupAt.toLocaleString()} 执行。`)
+}
+
 async function startSocketServer() {
   // 这些模块依赖 DATABASE_URL，必须在 dotenv 加载之后再导入。
   const [
@@ -150,6 +187,7 @@ async function startSocketServer() {
 
   // Socket 重启会清空内存在线状态，因此同时修正数据库遗留的在线人数和成员记录。
   await roomPresence.resetPersistedPresence()
+  scheduleDailyRoomCleanup(() => roomPresence.cleanupExpiredRooms())
 
   const io = new Server(httpServer, {
     cors: {

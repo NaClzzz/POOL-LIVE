@@ -73,16 +73,20 @@ type ForcedLeavePayload = {
   reason?: 'switched' | 'kicked'
 }
 
-function getPasswordStorageKey(roomCode: string) {
-  return `pool-room-password:${roomCode.toLowerCase()}`
+function getPasswordStorageKey(roomCode: unknown) {
+  const normalizedRoomCode = typeof roomCode === 'string' ? roomCode.trim().toLowerCase() : ''
+  return normalizedRoomCode ? `pool-room-password:${normalizedRoomCode}` : null
 }
 
 function getStoredRoomPassword(roomCode: string) {
-  return sessionStorage.getItem(getPasswordStorageKey(roomCode)) ?? ''
+  const key = getPasswordStorageKey(roomCode)
+  return key ? (sessionStorage.getItem(key) ?? '') : ''
 }
 
 function saveRoomPassword(roomCode: string, password: string) {
   const key = getPasswordStorageKey(roomCode)
+  if (!key) return
+
   if (password) {
     sessionStorage.setItem(key, password)
     return

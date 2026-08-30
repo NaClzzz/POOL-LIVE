@@ -49,8 +49,11 @@ async function fetchPublicRooms() {
   }
 }
 
-function saveJoinPassword(roomCode: string, password: string) {
-  const key = `pool-room-password:${roomCode.toLowerCase()}`
+function saveJoinPassword(roomCode: unknown, password: string) {
+  const normalizedRoomCode = typeof roomCode === 'string' ? roomCode.trim().toLowerCase() : ''
+  if (!normalizedRoomCode) return
+
+  const key = `pool-room-password:${normalizedRoomCode}`
 
   if (password) {
     sessionStorage.setItem(key, password)

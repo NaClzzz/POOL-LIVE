@@ -9,6 +9,9 @@ import type {
   UserRoomPlaylistItem,
 } from '@/types/room'
 
+// 房间客户端常驻的最大聊天消息数量，避免长期在线时列表无限增长。
+const ROOM_MESSAGE_LIMIT = 200
+
 // 用于让房间页面、底部播放器和右侧抽屉共享一份服务端房间状态。
 type RoomRealtimeStore = {
   roomCode: string | null
@@ -64,7 +67,7 @@ export const useRoomRealtimeStore = create<RoomRealtimeStore>()(set => ({
         return state
       }
 
-      return { messages: [...state.messages, message] }
+      return { messages: [...state.messages, message].slice(-ROOM_MESSAGE_LIMIT) }
     })
   },
 

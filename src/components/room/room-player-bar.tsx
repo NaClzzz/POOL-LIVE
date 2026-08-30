@@ -10,12 +10,13 @@ import {
 } from '@ant-design/icons'
 import { Avatar, Button, Layout, Slider, Tooltip, Typography } from 'antd'
 import { useParams } from 'next/navigation'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 
+import { RoomPlaybackProgress } from '@/components/room/room-playback-progress'
 import { RoomQueueDrawer } from '@/components/room/room-queue-drawer'
 import { useSession } from '@/lib/auth-client'
 import { useCurrentSongLike } from '@/lib/liked-songs/use-current-song-like'
-import { getRoomPlaybackPositionMs } from '@/lib/room/playback'
+import { useRoomAudioSync } from '@/lib/room/use-room-audio-sync'
 import { getSocket } from '@/lib/socket-client'
 import { usePlayerStore } from '@/store/player-store'
 import { useRoomRealtimeStore } from '@/store/room-realtime-store'
@@ -38,91 +39,10 @@ type PlaybackActionAcknowledgement =
       message: string
     }
 
-// 用于播放地址接口的响应数据。
-type PlayUrlResponse = {
-  data?: Array<{ url: string | null }>
-  message?: string
-}
-
-function formatTime(time: number) {
-  if (!Number.isFinite(time) || time < 0) return '00:00'
-
-  const totalSeconds = Math.floor(time)
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = String(totalSeconds % 60).padStart(2, '0')
-  return `${String(minutes).padStart(2, '0')}:${seconds}`
-}
-
-function isAbortError(error: unknown) {
-  return error instanceof DOMException && error.name === 'AbortError'
-}
-
-function waitForAudioReady(audio: HTMLAudioElement, signal: AbortSignal) {
-  if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return Promise.resolve()
-
-  return new Promise<void>((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      cleanup()
-      reject(new Error('房间歌曲加载超时。'))
-    }, 10_000)
-
-    const cleanup = () => {
-      window.clearTimeout(timeout)
-      audio.removeEventListener('canplay', handleLoaded)
-      audio.removeEventListener('error', handleError)
-      signal.removeEventListener('abort', handleAbort)
-    }
-
-    const handleLoaded = () => {
-      cleanup()
-      resolve()
-    }
-
-    const handleError = () => {
-      cleanup()
-      reject(new Error('房间歌曲媒体加载失败。'))
-    }
-
-    const handleAbort = () => {
-      cleanup()
-      reject(new DOMException('Room audio loading was cancelled.', 'AbortError'))
-    }
-
-    audio.addEventListener('canplay', handleLoaded, { once: true })
-    audio.addEventListener('error', handleError, { once: true })
-    signal.addEventListener('abort', handleAbort, { once: true })
-  })
-}
-
-function waitForRoomStart(delayMs: number, signal: AbortSignal) {
-  if (delayMs <= 0) return Promise.resolve()
-
-  return new Promise<void>((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      cleanup()
-      resolve()
-    }, delayMs)
-
-    const handleAbort = () => {
-      cleanup()
-      reject(new DOMException('Room audio start was cancelled.', 'AbortError'))
-    }
-
-    const cleanup = () => {
-      window.clearTimeout(timeout)
-      signal.removeEventListener('abort', handleAbort)
-    }
-
-    signal.addEventListener('abort', handleAbort, { once: true })
-  })
-}
-
 export function RoomPlayerBar() {
   const params = useParams<{ roomCode: string }>()
   const currentPathRoomCode = typeof params.roomCode === 'string' ? params.roomCode.toLowerCase() : null
   const { data: session } = useSession()
-  const audioRef = useRef<HTMLAudioElement>(null)
-  const audioRequestIdRef = useRef(0)
   const reportedPlaybackVersionRef = useRef<number | null>(null)
   const volume = usePlayerStore(state => state.volume)
   const setVolume = usePlayerStore(state => state.setVolume)
@@ -134,9 +54,6 @@ export function RoomPlayerBar() {
   const [activePanel, setActivePanel] = useState<'queue' | null>(null)
   const [playlistError, setPlaylistError] = useState<string | null>(null)
   const [isMutatingPlaylist, setIsMutatingPlaylist] = useState(false)
-  const [audioError, setAudioError] = useState<string | null>(null)
-  const [needsAudioUnlock, setNeedsAudioUnlock] = useState(false)
-  const [displayPosition, setDisplayPosition] = useState(0)
   const [playbackActionError, setPlaybackActionError] = useState<string | null>(null)
   const [isSubmittingPlaybackAction, setIsSubmittingPlaybackAction] = useState(false)
   const canUseRoom = Boolean(storedRoomCode && storedRoomCode === currentPathRoomCode)
@@ -163,133 +80,9 @@ export function RoomPlayerBar() {
       !hasVotedToSkip,
   )
 
-  useEffect(() => {
-    if (!canUseRoom) return
-
-    const initialFrame = requestAnimationFrame(() => setDisplayPosition(getRoomPlaybackPositionMs(playback) / 1000))
-    const timer = window.setInterval(() => setDisplayPosition(getRoomPlaybackPositionMs(playback) / 1000), 250)
-    return () => {
-      cancelAnimationFrame(initialFrame)
-      window.clearInterval(timer)
-    }
-  }, [canUseRoom, playback])
-
-  useEffect(() => {
-    const audio = audioRef.current
-    if (audio) audio.volume = volume
-  }, [volume])
-
-  useEffect(() => {
-    const audio = audioRef.current
-    const requestId = audioRequestIdRef.current + 1
-    audioRequestIdRef.current = requestId
-    const abortController = new AbortController()
-
-    if (
-      !canUseRoom ||
-      playbackStatus !== 'playing' ||
-      playbackVersion === null ||
-      playbackSongId === null
-    ) {
-      audio?.pause()
-      return () => abortController.abort()
-    }
-
-    async function loadAndStartRoomAudio() {
-      try {
-        const response = await fetch(`/api/music/play-url/${playbackSongId}`, {
-          signal: abortController.signal,
-        })
-        const data = (await response.json()) as PlayUrlResponse
-        if (!response.ok) throw new Error(data.message || '获取房间播放地址失败。')
-
-        const url = data.data?.[0]?.url
-        if (!url) throw new Error('这首歌暂时无法播放，可能受版权或会员限制。')
-        if (abortController.signal.aborted || audioRequestIdRef.current !== requestId) return
-
-        const currentAudio = audioRef.current
-        if (!currentAudio) return
-
-        setAudioError(null)
-        setNeedsAudioUnlock(false)
-        currentAudio.pause()
-        currentAudio.src = url
-        currentAudio.load()
-        await waitForAudioReady(currentAudio, abortController.signal)
-        if (abortController.signal.aborted || audioRequestIdRef.current !== requestId) return
-
-        const latestPlayback = useRoomRealtimeStore.getState().playback
-        if (
-          !latestPlayback ||
-          latestPlayback.status !== 'playing' ||
-          latestPlayback.version !== playbackVersion ||
-          latestPlayback.song?.id !== playbackSongId
-        ) {
-          return
-        }
-
-        const startAt = latestPlayback.startedAt ? new Date(latestPlayback.startedAt).getTime() : Number.NaN
-        if (Number.isFinite(startAt)) {
-          await waitForRoomStart(Math.max(0, startAt - Date.now()), abortController.signal)
-        }
-        if (abortController.signal.aborted || audioRequestIdRef.current !== requestId) return
-
-        const currentPlayback = useRoomRealtimeStore.getState().playback
-        if (
-          !currentPlayback ||
-          currentPlayback.status !== 'playing' ||
-          currentPlayback.version !== playbackVersion ||
-          currentPlayback.song?.id !== playbackSongId
-        ) {
-          return
-        }
-
-        const targetPosition = getRoomPlaybackPositionMs(currentPlayback) / 1000
-        const mediaDuration = currentAudio.duration
-        currentAudio.currentTime = Number.isFinite(mediaDuration) && mediaDuration > 0
-          ? Math.min(targetPosition, mediaDuration)
-          : targetPosition
-
-        await currentAudio.play()
-        if (abortController.signal.aborted || audioRequestIdRef.current !== requestId) return
-        setNeedsAudioUnlock(false)
-        setAudioError(null)
-      } catch (loadFailure) {
-        if (abortController.signal.aborted || audioRequestIdRef.current !== requestId || isAbortError(loadFailure)) return
-        setAudioError(loadFailure instanceof Error ? loadFailure.message : '房间歌曲播放失败。')
-        if (loadFailure instanceof DOMException && loadFailure.name === 'NotAllowedError') {
-          setNeedsAudioUnlock(true)
-        }
-      }
-    }
-
-    void loadAndStartRoomAudio()
-    return () => {
-      abortController.abort()
-    }
-  }, [canUseRoom, playbackSongId, playbackStatus, playbackVersion])
-
-  useEffect(() => {
-    const audio = audioRef.current
-    return () => audio?.pause()
-  }, [])
-
   function handleVolumeChange(value: number | number[]) {
     const nextVolume = Array.isArray(value) ? value[0] : value
     if (typeof nextVolume === 'number') setVolume(nextVolume / 100)
-  }
-
-  function handleUnlockAudio() {
-    const audio = audioRef.current
-    if (!audio) return
-
-    void audio.play().then(
-      () => {
-        setNeedsAudioUnlock(false)
-        setAudioError(null)
-      },
-      () => setNeedsAudioUnlock(true),
-    )
   }
 
   function handlePlaylistMutation(
@@ -369,17 +162,21 @@ export function RoomPlayerBar() {
     })
   }
 
-  const duration = playback?.durationMs ? playback.durationMs / 1000 : 0
+  const { audioError, audioRef, handleAudioError, needsAudioUnlock, unlockAudio } = useRoomAudioSync({
+    canUseRoom,
+    playbackSongId,
+    playbackStatus,
+    playbackVersion,
+    volume,
+    onMediaError: reportCurrentPlaybackError,
+  })
 
   return (
     <>
       <audio
         ref={audioRef}
         preload="metadata"
-        onError={() => {
-          setAudioError('歌曲播放失败，正在尝试跳过。')
-          reportCurrentPlaybackError()
-        }}
+        onError={handleAudioError}
       />
       <RoomQueueDrawer
         open={activePanel === 'queue'}
@@ -425,27 +222,13 @@ export function RoomPlayerBar() {
           </Tooltip>
         </div>
 
-        <div className="absolute left-1/2 top-1/2 hidden w-[min(560px,46vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-1 md:flex">
-          <div className="flex w-full items-center gap-3">
-            <Typography.Text type="secondary" className="!text-xs">
-              {formatTime(displayPosition)}
-            </Typography.Text>
-            <Slider
-              className="!mb-0 flex-1"
-              disabled
-              min={0}
-              max={duration || 1}
-              value={Math.min(displayPosition, duration || 0)}
-              tooltip={{ open: false }}
-            />
-            <Typography.Text type="secondary" className="!text-xs">
-              {formatTime(duration)}
-            </Typography.Text>
-          </div>
-          <Typography.Text type="secondary" className="!text-center !text-[11px]">
-            {playback?.status === 'playing' ? '房间正在按固定上台顺序自动轮播' : '等待上台成员准备歌曲'}
-          </Typography.Text>
-        </div>
+        <RoomPlaybackProgress
+          canUseRoom={canUseRoom}
+          durationMs={playback?.durationMs ?? 0}
+          startOffsetMs={playback?.startOffsetMs ?? 0}
+          startedAt={playback?.startedAt ?? null}
+          status={playback?.status ?? 'idle'}
+        />
 
         <div className="ml-auto flex items-center gap-1">
           <Tooltip
@@ -500,7 +283,7 @@ export function RoomPlayerBar() {
           {needsAudioUnlock ? (
             <button
               type="button"
-              onClick={handleUnlockAudio}
+              onClick={unlockAudio}
               className="rounded-full bg-[#eaf6ff] px-3 py-1 text-xs font-medium text-[#1e88e5]"
             >
               点击开启声音

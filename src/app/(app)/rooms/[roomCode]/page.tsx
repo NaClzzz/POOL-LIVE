@@ -277,7 +277,9 @@ export default function RoomPage() {
   const owner = members.find(member => member.isOwner)
   const currentUserId = session?.user.id
   const isCurrentUserHost = owner?.id === currentUserId
-  const hasJoinedStage = Boolean(currentUserId && stageMembers.some(member => member.id === currentUserId))
+  const hasJoinedStage = Boolean(
+    currentUserId && stageMembers.some(member => member.id === currentUserId),
+  )
   const needsPassword = Boolean(socketError?.includes('密码'))
   const activeMemberId = playback?.activeMemberId
 
@@ -404,13 +406,18 @@ export default function RoomPage() {
     <main className="desktop-page desktop-page--room !flex !h-[calc(100vh-176px)] !min-h-0 !flex-col !overflow-hidden !px-12 !py-4">
       <header className="mb-3 flex shrink-0 items-center justify-between border-b border-[#dfe4e7] pb-3">
         <div className="flex min-w-0 items-center gap-4">
-          <Link href="/rooms" className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-[#71808a] hover:text-[#1e88e5]">
+          <Link
+            href="/rooms"
+            className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-[#71808a] hover:text-[#1e88e5]"
+          >
             <ArrowLeftOutlined />
             返回大厅
           </Link>
           <span className="h-4 w-px bg-[#dfe4e7]" />
           <div className="min-w-0">
-            <p className="m-0 text-[10px] font-semibold tracking-[0.16em] text-[#1e88e5]">POOL LIVE ROOM</p>
+            <p className="m-0 text-[10px] font-semibold tracking-[0.16em] text-[#1e88e5]">
+              POOL LIVE ROOM
+            </p>
             <h1 className="m-0 truncate text-2xl font-semibold tracking-[-0.03em] text-[#222a30]">
               {room?.name ?? '正在加入房间'}
             </h1>
@@ -475,107 +482,165 @@ export default function RoomPage() {
       {room ? (
         <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
           <div className="flex min-w-0 min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-          <Card className="shrink-0" styles={{ body: { padding: 18 } }}>
-            <div className="flex items-center justify-between border-b border-[#edf0f2] pb-3">
-              <div className="flex items-center gap-3">
-                <Tag color="blue" className="!m-0">{room.tag}</Tag>
-                {room.isPasswordProtected ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs text-[#71808a]"><LockOutlined />加密房间</span>
-                ) : null}
-              </div>
-              <span className="inline-flex items-center gap-1.5 text-xs text-[#71808a]"><TeamOutlined />{room.memberCount}/{room.maxMembers} 人在线</span>
-            </div>
-            <div className="mt-3 flex items-center gap-3 overflow-x-auto pb-1">
-              <span className="shrink-0 text-xs font-semibold text-[#34454f]">在线成员</span>
-              {members.map(member => (
-                <div key={member.id} className="flex shrink-0 items-center gap-1.5">
-                  <span className="group relative block h-7 w-7">
-                    <Avatar size={28} style={{ backgroundColor: avatarColor(member.id) }} className="!font-semibold !text-xs !text-white">{member.name.slice(0, 1)}</Avatar>
-                    {member.isOwner ? <CrownOutlined className="absolute -right-1 -top-1 rounded-full bg-white p-0.5 text-[9px] text-[#1e88e5]" /> : null}
-                    {isCurrentUserHost && member.id !== currentUserId && !member.isOwner ? (
-                      <Popconfirm
-                        title={`确定踢出 ${member.name}？`}
-                        description="对方会立即返回大厅。"
-                        okText="踢出"
-                        cancelText="取消"
-                        okButtonProps={{ danger: true, loading: kickingMemberId === member.id }}
-                        disabled={Boolean(kickingMemberId)}
-                        onConfirm={() => handleKickMember(member.id)}
-                      >
-                        <button
-                          type="button"
-                          disabled={Boolean(kickingMemberId)}
-                          aria-label={`踢出 ${member.name}`}
-                          className="absolute inset-0 z-10 grid place-items-center rounded-full bg-[#d4380d]/85 text-[10px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100 disabled:cursor-not-allowed"
-                        >
-                          <span className="inline-flex items-center gap-0.5"><UserDeleteOutlined />踢出</span>
-                        </button>
-                      </Popconfirm>
-                    ) : null}
-                  </span>
-                  <span className="max-w-20 truncate text-xs text-[#52616a]">{member.name}</span>
+            <Card className="shrink-0" styles={{ body: { padding: 18 } }}>
+              <div className="flex items-center justify-between border-b border-[#edf0f2] pb-3">
+                <div className="flex items-center gap-3">
+                  <Tag color="blue" className="!m-0">
+                    {room.tag}
+                  </Tag>
+                  {room.isPasswordProtected ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-[#71808a]">
+                      <LockOutlined />
+                      加密房间
+                    </span>
+                  ) : null}
                 </div>
-              ))}
-            </div>
-          </Card>
-
-          <Card className="shrink-0" styles={{ body: { padding: 18 } }}>
-            <div className="mb-3 flex items-center justify-between border-b border-[#edf0f2] pb-3">
-              <div>
-                <p className="m-0 text-sm font-semibold text-[#34454f]">上台成员</p>
-                <p className="m-0 mt-0.5 text-xs text-[#71808a]">队列顺序固定，从左到右循环播放每位成员房间歌单的第一首歌。</p>
+                <span className="inline-flex items-center gap-1.5 text-xs text-[#71808a]">
+                  <TeamOutlined />
+                  {room.memberCount}/{room.maxMembers} 人在线
+                </span>
               </div>
-              <span className="text-xs text-[#71808a]">{stageMembers.length}/{room.maxStageMembers} 人</span>
-            </div>
-
-            {stageError ? <Alert className="mb-3" type="error" showIcon message={stageError} /> : null}
-            <div className="flex h-[78px] items-start gap-4 overflow-x-auto px-1">
-              {stageMembers.map(member => {
-                const canLeaveStage = member.id === currentUserId || isCurrentUserHost
-                const isPlaying = member.id === activeMemberId
-
-                return (
-                  <div key={member.id} className="flex w-14 shrink-0 flex-col items-center text-center">
-                    <span className="group relative block h-10 w-10">
-                      <Avatar size={40} style={{ backgroundColor: avatarColor(member.id) }} className="!font-semibold !text-white">{member.name.slice(0, 1)}</Avatar>
-                      {canLeaveStage ? (
-                        <button type="button" aria-label={`让 ${member.name} 下台`} onClick={() => handleLeaveStage(member.id)} className="absolute inset-0 grid place-items-center rounded-full bg-[#222a30]/75 text-[11px] font-semibold text-white opacity-0 group-hover:opacity-100">
-                          下台
-                        </button>
+              <div className="mt-3 flex items-center gap-3 overflow-x-auto pb-1">
+                <span className="shrink-0 text-xs font-semibold text-[#34454f]">在线成员</span>
+                {members.map(member => (
+                  <div key={member.id} className="flex shrink-0 items-center gap-1.5">
+                    <span className="group relative block h-7 w-7">
+                      <Avatar
+                        size={28}
+                        style={{ backgroundColor: avatarColor(member.id) }}
+                        className="!font-semibold !text-xs !text-white"
+                      >
+                        {member.name.slice(0, 1)}
+                      </Avatar>
+                      {member.isOwner ? (
+                        <CrownOutlined className="absolute -right-1 -top-1 rounded-full bg-white p-0.5 text-[9px] text-[#1e88e5]" />
+                      ) : null}
+                      {isCurrentUserHost && member.id !== currentUserId && !member.isOwner ? (
+                        <Popconfirm
+                          title={`确定踢出 ${member.name}？`}
+                          description="对方会立即返回大厅。"
+                          okText="踢出"
+                          cancelText="取消"
+                          okButtonProps={{ danger: true, loading: kickingMemberId === member.id }}
+                          disabled={Boolean(kickingMemberId)}
+                          onConfirm={() => handleKickMember(member.id)}
+                        >
+                          <button
+                            type="button"
+                            disabled={Boolean(kickingMemberId)}
+                            aria-label={`踢出 ${member.name}`}
+                            className="absolute inset-0 z-10 grid place-items-center rounded-full bg-[#d4380d]/85 text-[10px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100 disabled:cursor-not-allowed"
+                          >
+                            <span className="inline-flex items-center gap-0.5">
+                              <UserDeleteOutlined />
+                              踢出
+                            </span>
+                          </button>
+                        </Popconfirm>
                       ) : null}
                     </span>
-                    <span className="mt-1 w-full truncate text-xs font-medium text-[#34454f]">{member.name}</span>
-                    <span className={`mt-0.5 text-[10px] ${isPlaying ? 'text-[#1e88e5]' : 'text-transparent'}`}>播放中</span>
+                    <span className="max-w-20 truncate text-xs text-[#52616a]">{member.name}</span>
                   </div>
-                )
-              })}
+                ))}
+              </div>
+            </Card>
 
-              {!hasJoinedStage && stageMembers.length < room.maxStageMembers ? (
-                <button type="button" onClick={handleJoinStage} className="flex w-14 shrink-0 flex-col items-center text-center" aria-label="上台">
-                  <span className="grid h-10 w-10 place-items-center rounded-full border border-dashed border-[#9ccff7] bg-[#f5fbff] text-lg text-[#1e88e5] hover:bg-[#eaf6ff]">+</span>
-                  <span className="mt-1 text-xs font-medium text-[#1e88e5]">上台</span>
-                </button>
-              ) : null}
-              {stageMembers.length === 0 ? <p className="m-0 py-3 text-sm text-[#71808a]">暂无成员上台。</p> : null}
-            </div>
-          </Card>
-
-          <Card className="min-h-0 flex-1" styles={{ body: { height: '100%', padding: 18 } }}>
-            <div className="flex h-full min-h-0 flex-col">
-              <div className="flex shrink-0 items-center justify-between gap-4 border-b border-[#edf0f2] pb-3">
-                <div className="min-w-0">
-                  <p className="m-0 text-[10px] font-semibold tracking-[0.16em] text-[#1e88e5]">NOW PLAYING</p>
-                  <p className="m-0 mt-1 truncate text-lg font-semibold text-[#222a30]">
-                    {playback?.song ? playback.song.name : '等待上台成员准备歌曲'}
+            <Card className="shrink-0" styles={{ body: { padding: 18 } }}>
+              <div className="mb-3 flex items-center justify-between border-b border-[#edf0f2] pb-3">
+                <div>
+                  <p className="m-0 text-sm font-semibold text-[#34454f]">上台成员</p>
+                  <p className="m-0 mt-0.5 text-xs text-[#71808a]">
+                    队列顺序固定，从左到右循环播放每位成员房间歌单的第一首歌。
                   </p>
                 </div>
-                <span className="shrink-0 text-xs text-[#71808a]">{playback?.song?.artists ?? ''}</span>
+                <span className="text-xs text-[#71808a]">
+                  {stageMembers.length}/{room.maxStageMembers} 人
+                </span>
               </div>
-              <div className="flex min-h-0 flex-1 flex-col justify-center overflow-hidden py-2 text-center">
-                <RoomLyrics playback={playback} />
+
+              {stageError ? (
+                <Alert className="mb-3" type="error" showIcon message={stageError} />
+              ) : null}
+              <div className="flex h-[78px] items-start gap-4 overflow-x-auto px-1">
+                {stageMembers.map(member => {
+                  const canLeaveStage = member.id === currentUserId || isCurrentUserHost
+                  const isPlaying = member.id === activeMemberId
+
+                  return (
+                    <div
+                      key={member.id}
+                      className="flex w-14 shrink-0 flex-col items-center text-center"
+                    >
+                      <span className="group relative block h-10 w-10">
+                        <Avatar
+                          size={40}
+                          style={{ backgroundColor: avatarColor(member.id) }}
+                          className="!font-semibold !text-white"
+                        >
+                          {member.name.slice(0, 1)}
+                        </Avatar>
+                        {canLeaveStage ? (
+                          <button
+                            type="button"
+                            aria-label={`让 ${member.name} 下台`}
+                            onClick={() => handleLeaveStage(member.id)}
+                            className="absolute inset-0 grid place-items-center rounded-full bg-[#222a30]/75 text-[11px] font-semibold text-white opacity-0 group-hover:opacity-100"
+                          >
+                            下台
+                          </button>
+                        ) : null}
+                      </span>
+                      <span className="mt-1 w-full truncate text-xs font-medium text-[#34454f]">
+                        {member.name}
+                      </span>
+                      <span
+                        className={`mt-0.5 text-[10px] ${isPlaying ? 'text-[#1e88e5]' : 'text-transparent'}`}
+                      >
+                        播放中
+                      </span>
+                    </div>
+                  )
+                })}
+
+                {!hasJoinedStage && stageMembers.length < room.maxStageMembers ? (
+                  <button
+                    type="button"
+                    onClick={handleJoinStage}
+                    className="flex w-14 shrink-0 flex-col items-center text-center"
+                    aria-label="上台"
+                  >
+                    <span className="grid h-10 w-10 place-items-center rounded-full border border-dashed border-[#9ccff7] bg-[#f5fbff] text-lg text-[#1e88e5] hover:bg-[#eaf6ff]">
+                      +
+                    </span>
+                    <span className="mt-1 text-xs font-medium text-[#1e88e5]">上台</span>
+                  </button>
+                ) : null}
+                {stageMembers.length === 0 ? (
+                  <p className="m-0 py-3 text-sm text-[#71808a]">暂无成员上台。</p>
+                ) : null}
               </div>
-            </div>
-          </Card>
+            </Card>
+
+            <Card className="min-h-0 flex-1" styles={{ body: { height: '100%', padding: 18 } }}>
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex shrink-0 items-center justify-between gap-4 border-b border-[#edf0f2] pb-3">
+                  <div className="min-w-0">
+                    <p className="m-0 text-[10px] font-semibold tracking-[0.16em] text-[#1e88e5]">
+                      NOW PLAYING
+                    </p>
+                    <p className="m-0 mt-1 truncate text-lg font-semibold text-[#222a30]">
+                      {playback?.song ? playback.song.name : '等待上台成员准备歌曲'}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-xs text-[#71808a]">
+                    {playback?.song?.artists ?? ''}
+                  </span>
+                </div>
+                <div className="flex min-h-0 flex-1 flex-col justify-center overflow-hidden py-2 text-center">
+                  <RoomLyrics playback={playback} />
+                </div>
+              </div>
+            </Card>
           </div>
           <div className="w-[360px] shrink-0">
             <RoomChatPanel
